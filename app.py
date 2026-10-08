@@ -2349,8 +2349,3 @@ elif page == "🔔 Alerts":
 elif page == "⚙️ Settings":
 
     settings_page()
-# # jjjj
-#             st.plotly_chart(
-#                 fig,
-#                 use_container_width=True
-#             )
