@@ -913,4 +913,5 @@ def dashboard():
 
             st.plotly_chart(
                 fig,
-                use_container_wid
+                use_container_width=True
+            )
