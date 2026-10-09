@@ -387,96 +387,96 @@ initialize_database()
 
 # CSS===============
 
+
 st.markdown("""
 <style>
-
+/* Main application */
 .stApp {
-    background:
-        radial-gradient(
-            circle at 15% 0%,
-            rgba(100,80,255,.14),
-            transparent 28%
-        ),
-        radial-gradient(
-            circle at 90% 15%,
-            rgba(0,160,255,.10),
-            transparent 28%
-        ),
-        #07111f;
+    background: #000000;
+    color: #ffffff;
 }
 
+/* Main content area */
 .block-container {
-    max-width: 1550px;
-    padding-top: 1.2rem;
+    max-width: 1450px;
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
 }
 
+/* Sidebar */
 [data-testid="stSidebar"] {
-    background: #081426;
-    border-right: 1px solid #20344f;
+    background: #111111;
+    border-right: 1px solid #333333;
 }
 
+/* Sidebar text */
 [data-testid="stSidebar"] * {
-    color: #e8eef7;
+    color: #ffffff;
 }
 
+/* Metric cards */
 div[data-testid="stMetric"] {
-    background: linear-gradient(
-        145deg,
-        #122842,
-        #0c1c30
-    );
-    border: 1px solid #284260;
-    border-radius: 16px;
-    padding: 16px;
+    background: #111111;
+    border: 1px solid #333333;
+    border-radius: 8px;
+    padding: 14px;
 }
 
 div[data-testid="stMetricLabel"] {
-    color: #8fa4bd !important;
+    color: #cccccc !important;
 }
 
 div[data-testid="stMetricValue"] {
-    color: white !important;
+    color: #ffffff !important;
 }
 
+/* Buttons */
 div.stButton > button {
-    border-radius: 10px;
-    background: #10243d;
-    border: 1px solid #294566;
-    color: white;
+    background: #222222;
+    color: #ffffff;
+    border: 1px solid #444444;
+    border-radius: 6px;
 }
 
 div.stButton > button:hover {
-    background: #1b3555;
-    border-color: #7564ff;
+    background: #333333;
+    border-color: #777777;
+    color: #ffffff;
 }
 
+/* Tables */
 [data-testid="stDataFrame"] {
-    border-radius: 12px;
+    border-radius: 8px;
 }
 
+/* Headings */
 h1, h2, h3 {
-    letter-spacing: -0.3px;
+    color: #ffffff;
+    letter-spacing: normal;
 }
 
+/* Custom title and subtitle */
 .ss-title {
-    font-size: 30px;
-    font-weight: 700;
+    font-size: 28px;
+    font-weight: 600;
 }
 
 .ss-subtitle {
-    color: #8fa4bd;
-    margin-bottom: 18px;
+    color: #bbbbbb;
+    margin-bottom: 16px;
 }
 
+/* Alert boxes */
 .alert-box {
-    background: #111f33;
-    border: 1px solid #263e5c;
+    background: #111111;
+    color: #ffffff;
+    border: 1px solid #333333;
     padding: 14px;
-    border-radius: 12px;
+    border-radius: 8px;
 }
-
 </style>
 """, unsafe_allow_html=True)
+
 
 
 
