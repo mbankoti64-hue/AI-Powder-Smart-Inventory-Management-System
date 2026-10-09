@@ -63,7 +63,7 @@ def initialize_database():
     cur = conn.cursor()
 
     cur.executescript("""
-    
+
     CREATE TABLE IF NOT EXISTS products(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sku TEXT UNIQUE,
@@ -394,96 +394,96 @@ initialize_database()
 # CSS
 # =========================================================
 
+
 st.markdown("""
 <style>
-
+/* Main application */
 .stApp {
-    background:
-        radial-gradient(
-            circle at 15% 0%,
-            rgba(100,80,255,.14),
-            transparent 28%
-        ),
-        radial-gradient(
-            circle at 90% 15%,
-            rgba(0,160,255,.10),
-            transparent 28%
-        ),
-        #07111f;
+    background: #000000;
+    color: #ffffff;
 }
 
+/* Main content area */
 .block-container {
-    max-width: 1550px;
-    padding-top: 1.2rem;
+    max-width: 1450px;
+    padding-top: 1.5rem;
+    padding-bottom: 2rem;
 }
 
+/* Sidebar */
 [data-testid="stSidebar"] {
-    background: #081426;
-    border-right: 1px solid #20344f;
+    background: #111111;
+    border-right: 1px solid #333333;
 }
 
+/* Sidebar text */
 [data-testid="stSidebar"] * {
-    color: #e8eef7;
+    color: #ffffff;
 }
 
+/* Metric cards */
 div[data-testid="stMetric"] {
-    background: linear-gradient(
-        145deg,
-        #122842,
-        #0c1c30
-    );
-    border: 1px solid #284260;
-    border-radius: 16px;
-    padding: 16px;
+    background: #111111;
+    border: 1px solid #333333;
+    border-radius: 8px;
+    padding: 14px;
 }
 
 div[data-testid="stMetricLabel"] {
-    color: #8fa4bd !important;
+    color: #cccccc !important;
 }
 
 div[data-testid="stMetricValue"] {
-    color: white !important;
+    color: #ffffff !important;
 }
 
+/* Buttons */
 div.stButton > button {
-    border-radius: 10px;
-    background: #10243d;
-    border: 1px solid #294566;
-    color: white;
+    background: #222222;
+    color: #ffffff;
+    border: 1px solid #444444;
+    border-radius: 6px;
 }
 
 div.stButton > button:hover {
-    background: #1b3555;
-    border-color: #7564ff;
+    background: #333333;
+    border-color: #777777;
+    color: #ffffff;
 }
 
+/* Tables */
 [data-testid="stDataFrame"] {
-    border-radius: 12px;
+    border-radius: 8px;
 }
 
+/* Headings */
 h1, h2, h3 {
-    letter-spacing: -0.3px;
+    color: #ffffff;
+    letter-spacing: normal;
 }
 
+/* Custom title and subtitle */
 .ss-title {
-    font-size: 30px;
-    font-weight: 700;
+    font-size: 28px;
+    font-weight: 600;
 }
 
 .ss-subtitle {
-    color: #8fa4bd;
-    margin-bottom: 18px;
+    color: #bbbbbb;
+    margin-bottom: 16px;
 }
 
+/* Alert boxes */
 .alert-box {
-    background: #111f33;
-    border: 1px solid #263e5c;
+    background: #111111;
+    color: #ffffff;
+    border: 1px solid #333333;
     padding: 14px;
-    border-radius: 12px;
+    border-radius: 8px;
 }
-
 </style>
 """, unsafe_allow_html=True)
+
 
 
 # =========================================================
@@ -493,7 +493,7 @@ h1, h2, h3 {
 with st.sidebar:
 
     st.markdown(
-        "# 🔷 SmartStock AI"
+        "#  SmartStock AI"
     )
 
     st.caption(
@@ -505,15 +505,15 @@ with st.sidebar:
     page = st.radio(
         "Navigation",
         [
-            "🏠 Dashboard",
-            "📦 Inventory",
-            "💰 Sales",
-            "🛒 Purchases",
-            "👥 Suppliers",
-            "📊 Reports",
-            "🤖 AI Assistant",
-            "🔔 Alerts",
-            "⚙️ Settings"
+            " Dashboard",
+            " Inventory",
+            " Sales",
+            " Purchases",
+            " Suppliers",
+            " Reports",
+            " AI Assistant",
+            " Alerts",
+            " Settings"
         ],
         label_visibility="collapsed"
     )
@@ -521,7 +521,7 @@ with st.sidebar:
     st.divider()
 
     st.markdown(
-        "### ⚡ Quick Actions"
+        "###  Quick Actions"
     )
 
     st.caption(
@@ -562,17 +562,12 @@ purchases = query_df(
 
 def dashboard():
 
-    st.markdown(
-        '<div class="ss-title">Good Evening! 👋</div>',
-        unsafe_allow_html=True
-    )
 
-    st.markdown(
-        '<div class="ss-subtitle">'
-        'Here is what is happening with your business.'
-        '</div>',
-        unsafe_allow_html=True
-    )
+    st.title("Inventory Dashboard")
+    st.caption("Overview of stock, sales, profit, and inventory alerts.")
+
+
+
 
     # -----------------------------------------------------
     # DATE SLIDER
@@ -637,12 +632,12 @@ def dashboard():
     c1,c2,c3,c4,c5 = st.columns(5)
 
     c1.metric(
-        "📦 Total Stock",
+        " Total Stock",
         f"{total_stock:,}"
     )
 
     c2.metric(
-        "💰 Sales",
+        " Sales",
         money(total_revenue)
     )
 
@@ -728,23 +723,25 @@ def dashboard():
                 )
             )
 
+
             fig.update_layout(
-                template="plotly_dark",
-                height=390,
-                margin=dict(
-                    l=10,
-                    r=10,
-                    t=20,
-                    b=10
-                ),
-                hovermode="x unified",
-                legend=dict(
-                    orientation="h",
-                    y=1.08
-                ),
-                xaxis_title="Date",
-                yaxis_title="Amount (₹)"
+                 template="plotly_white",
+                 height=320,
+                 margin=dict(
+                     l=10,
+                     r=10,
+                     t=15,
+                     b=10
+                 ),
+                 hovermode="x unified",
+                 legend=dict(
+                     orientation="h",
+                     y=1.05
+            ),
+             xaxis_title="Date",
+             yaxis_title="Amount (₹)"
             )
+
 
             st.plotly_chart(
                 fig,
@@ -824,7 +821,7 @@ def dashboard():
     with col3:
 
         st.markdown(
-            "### 📦 Stock by Category"
+            "###  Stock by Category"
         )
 
         stock_category = (
@@ -1173,7 +1170,7 @@ def dashboard():
 
 def inventory_page():
 
-    st.markdown("# 📦 Inventory")
+    st.markdown("#  Inventory")
 
     tab1,tab2,tab3 = st.tabs(
         [
@@ -1488,7 +1485,7 @@ def inventory_page():
 
 def sales_page():
 
-    st.markdown("# 💰 Sales Management")
+    st.markdown("#  Sales Management")
 
     product_data = query_df(
         "SELECT * FROM products ORDER BY name"
@@ -1628,7 +1625,7 @@ def sales_page():
 
 def purchases_page():
 
-    st.markdown("# 🛒 Purchases")
+    st.markdown("#  Purchases")
 
     product_data = query_df(
         "SELECT * FROM products ORDER BY name"
@@ -1759,7 +1756,7 @@ def purchases_page():
 
 def suppliers_page():
 
-    st.markdown("# 👥 Suppliers")
+    st.markdown("#  Suppliers")
 
     data = query_df(
         "SELECT * FROM suppliers ORDER BY name"
@@ -1836,7 +1833,7 @@ def suppliers_page():
 
 def reports_page():
 
-    st.markdown("# 📊 Reports & Analytics")
+    st.markdown("#  Reports & Analytics")
 
     data = query_df(
         "SELECT * FROM sales"
@@ -1950,7 +1947,7 @@ def process_ai(command):
         total = data["stock"].sum()
 
         return (
-            f"📦 Current total stock is "
+            f" Current total stock is "
             f"{int(total):,} units."
         )
 
@@ -1984,7 +1981,7 @@ def process_ai(command):
         revenue = sales_data["total"].sum()
 
         return (
-            f"💰 Total recorded sales are "
+            f" Total recorded sales are "
             f"{money(revenue)}."
         )
 
@@ -2128,7 +2125,7 @@ def process_ai(command):
             )
 
     return (
-        "🤖 I can understand commands like:\n\n"
+        " I can understand commands like:\n\n"
         "• Show total stock\n"
         "• Show sales\n"
         "• Show profit\n"
@@ -2142,7 +2139,7 @@ def process_ai(command):
 def ai_page():
 
     st.markdown(
-        "# 🤖 SmartStock AI Assistant"
+        "#  SmartStock AI Assistant"
     )
 
     st.caption(
@@ -2200,7 +2197,7 @@ def ai_page():
 def alerts_page():
 
     st.markdown(
-        "# 🔔 Inventory Alerts"
+        "#  Inventory Alerts"
     )
 
     data = query_df(
@@ -2268,7 +2265,7 @@ def alerts_page():
 def settings_page():
 
     st.markdown(
-        "# ⚙️ Settings"
+        "#  Settings"
     )
 
     st.markdown("""
@@ -2314,38 +2311,37 @@ def settings_page():
 # ROUTER
 # =========================================================
 
-if page == "🏠 Dashboard":
+if page == " Dashboard":
 
     dashboard()
 
-elif page == "📦 Inventory":
+elif page == " Inventory":
 
     inventory_page()
 
-elif page == "💰 Sales":
+elif page == " Sales":
 
     sales_page()
 
-elif page == "🛒 Purchases":
+elif page == " Purchases":
 
     purchases_page()
 
-elif page == "👥 Suppliers":
+elif page == " Suppliers":
 
     suppliers_page()
 
-elif page == "📊 Reports":
+elif page == " Reports":
 
     reports_page()
 
-elif page == "🤖 AI Assistant":
+elif page == " AI Assistant":
 
     ai_page()
 
-elif page == "🔔 Alerts":
+elif page == " Alerts":
 
     alerts_page()
 
-elif page == "⚙️ Settings":
-
+elif page == " Settings":
     settings_page()
