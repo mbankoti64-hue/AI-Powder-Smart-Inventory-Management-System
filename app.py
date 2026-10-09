@@ -237,7 +237,7 @@ def initialize_database():
         }
 
         
-        # GENERATE SALES FOR LAST 30 DAYS
+        # GENERATE SALES FOR LAST 30 DAYS===========================
     
 
         sales_pattern = [
@@ -290,7 +290,8 @@ def initialize_database():
                 price = item[2]
                 cost = item[3]
 
-                # Reduce some demo quantity
+                # Reduce some demo quantity=============
+                
                 if day_offset % 7 == 0:
                     qty += 1
 
@@ -546,8 +547,6 @@ purchases = query_df(
     "SELECT * FROM purchases"
 )
 
-
-# =========================================================
 # DASHBOARD
 # =========================================================
 
@@ -654,7 +653,7 @@ def dashboard():
 
     st.markdown("")
 
-    # =====================================================
+
     # MAIN VISUALIZATION
     # =====================================================
 
@@ -801,7 +800,6 @@ def dashboard():
                 }
             )
 
-    # =====================================================
     # SECOND ROW
     # =====================================================
 
