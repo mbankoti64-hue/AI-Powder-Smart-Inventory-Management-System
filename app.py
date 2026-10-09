@@ -8,8 +8,7 @@ from pathlib import Path
 import re
 
 
-# PAGE CONFIGURATION
-# ================================================
+# PAGE CONFIGURATION==============================
 
 st.set_page_config(
     page_title="SmartStock AI",
