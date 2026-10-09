@@ -18,8 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# DATABASE
-# =========================================================
+# DATABASE================================
 
 DB_FILE = Path("smartstock.db")
 
