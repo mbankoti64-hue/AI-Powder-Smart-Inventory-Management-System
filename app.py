@@ -8,9 +8,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import re
 
-# =========================================================
-# PAGE CONFIG
-# =========================================================
+# ================PAGE CONFIG===================
+
 
 st.set_page_config(
     page_title="SmartStock AI",
@@ -19,7 +18,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# =========================================================
 # DATABASE
 # =========================================================
 
