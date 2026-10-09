@@ -236,7 +236,7 @@ def initialize_database():
             for row in rows
         }
 
-        # -------------------------------------------------
+        
         # GENERATE SALES FOR LAST 30 DAYS
     
 
