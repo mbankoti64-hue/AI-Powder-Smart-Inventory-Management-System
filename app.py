@@ -550,18 +550,9 @@ purchases = query_df(
 # =========================================================
 
 def dashboard():
+st.title("Inventory Dashboard")
+st.caption("Overview of stock, sales, profit, and inventory alerts.")
 
-    st.markdown(
-        '<div class="ss-title">Good Evening! 👋</div>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        '<div class="ss-subtitle">'
-        'Here is what is happening with your business.'
-        '</div>',
-        unsafe_allow_html=True
-    )
 
     # -----------------------------------------------------
     # DATE SLIDER
