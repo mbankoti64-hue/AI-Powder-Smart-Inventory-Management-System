@@ -255,11 +255,11 @@ def initialize_database():
         ]
 
         customers = [
-            "Rahul",
-            "Sneha",
-            "Aman",
-            "Neha",
-            "Karan",
+            "MAYANK",
+            "PAWANI",
+            "ANSHUMAN",
+            "ADVAIT",
+            "LUCKY",
             "Riya",
             "Mohit",
             "Pooja"
