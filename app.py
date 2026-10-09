@@ -50,8 +50,6 @@ def execute(sql, params=()):
 def money(value):
     return f"₹{value:,.0f}"
 
-
-# =========================================================
 # DATABASE INITIALIZATION
 # =========================================================
 
