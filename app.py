@@ -238,7 +238,7 @@ def initialize_database():
 
         # -------------------------------------------------
         # GENERATE SALES FOR LAST 30 DAYS
-        # -------------------------------------------------
+    
 
         sales_pattern = [
 
