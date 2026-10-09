@@ -497,8 +497,8 @@ with st.sidebar:
     page = st.radio(
         "Navigation",
         [
-            "🏠 Dashboard",
-            "📦 Inventory",
+            " Dashboard",
+            " Inventory",
             "💰 Sales",
             "🛒 Purchases",
             "👥 Suppliers",
@@ -617,7 +617,7 @@ def dashboard():
     c1,c2,c3,c4,c5 = st.columns(5)
 
     c1.metric(
-        "📦 Total Stock",
+        " Total Stock",
         f"{total_stock:,}"
     )
 
@@ -802,7 +802,7 @@ def dashboard():
     with col3:
 
         st.markdown(
-            "### 📦 Stock by Category"
+            "###  Stock by Category"
         )
 
         stock_category = (
@@ -1148,7 +1148,7 @@ def dashboard():
 
 def inventory_page():
 
-    st.markdown("# 📦 Inventory")
+    st.markdown("#  Inventory")
 
     tab1,tab2,tab3 = st.tabs(
         [
@@ -1923,7 +1923,7 @@ def process_ai(command):
         total = data["stock"].sum()
 
         return (
-            f"📦 Current total stock is "
+            f" Current total stock is "
             f"{int(total):,} units."
         )
 
@@ -2287,11 +2287,11 @@ def settings_page():
 # ROUTER
 # =========================================================
 
-if page == "🏠 Dashboard":
+if page == " Dashboard":
 
     dashboard()
 
-elif page == "📦 Inventory":
+elif page == " Inventory":
 
     inventory_page()
 
