@@ -225,7 +225,7 @@ def initialize_database():
 
         # -------------------------------------------------
         # PRODUCT MAP
-        # -------------------------------------------------
+    
 
         rows = cur.execute(
             "SELECT id,name FROM products"
