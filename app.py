@@ -485,7 +485,7 @@ h1, h2, h3 {
 with st.sidebar:
 
     st.markdown(
-        "# 🔷 SmartStock AI"
+        "#  SmartStock AI"
     )
 
     st.caption(
