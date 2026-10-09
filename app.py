@@ -128,7 +128,7 @@ def initialize_database():
 
     conn.commit()
 
-    # CHECK WHETHER PRODUCTS EXIST
+    # CHECK WHETHER PRODUCTS EXIST---------------------------
 
 
     count = cur.execute(
@@ -224,7 +224,7 @@ def initialize_database():
         conn.commit()
 
     
-        # PRODUCT MAP
+        # PRODUCT MAP----------------------------
     
 
         rows = cur.execute(
