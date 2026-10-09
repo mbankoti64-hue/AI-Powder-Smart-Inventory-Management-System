@@ -129,7 +129,7 @@ def initialize_database():
     conn.commit()
 
     # CHECK WHETHER PRODUCTS EXIST
-    # -----------------------------------------------------
+
 
     count = cur.execute(
         "SELECT COUNT(*) FROM products"
