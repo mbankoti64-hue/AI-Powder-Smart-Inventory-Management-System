@@ -550,8 +550,8 @@ purchases = query_df(
 # =========================================================
 
 def dashboard():
-st.title("Inventory Dashboard")
-st.caption("Overview of stock, sales, profit, and inventory alerts.")
+    st.title("Inventory Dashboard")
+    st.caption("Overview of stock, sales, profit, and inventory alerts.")
 
 
     # -----------------------------------------------------
