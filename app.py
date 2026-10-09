@@ -223,7 +223,7 @@ def initialize_database():
 
         conn.commit()
 
-        # -------------------------------------------------
+    
         # PRODUCT MAP
     
 
