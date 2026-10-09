@@ -20,9 +20,8 @@ st.set_page_config(
 DB_FILE = Path("smartstock.db")
 
 
-# =========================================================
-# DATABASE HELPERS
-# =========================================================
+# DATABASE HELPERS==========================
+
 
 def db():
     conn = sqlite3.connect(
