@@ -577,31 +577,43 @@ with st.sidebar:
 # DASHBOARD
 
 
+@st.fragment(run_every="60s")
+def render_live_dashboard_header():
+    now = datetime.now()
+    if now.hour < 12:
+        greeting = "Good Morning"
+    elif now.hour < 17:
+        greeting = "Good Afternoon"
+    else:
+        greeting = "Good Evening"
+
+    head_left, head_right = st.columns([3.4, 1])
+    with head_left:
+        st.markdown(
+            f"<div style='font-size:1.85rem;font-weight:800;color:#F2F6FF;"
+            f"line-height:1.25;'>{greeting}, Mayank! 👋</div>"
+            "<div style='color:#A8B6D0;margin-top:5px;'>"
+            "Here's what's happening with your business today.</div>",
+            unsafe_allow_html=True
+        )
+    with head_right:
+        st.markdown(
+            f"<div style='text-align:right;color:#D7E2F6;padding-top:4px;"
+            f"font-weight:650;'>📅 {now.strftime('%d %b %Y')}<br>"
+            f"<span style='font-size:.82rem;color:#A8B6D0;font-weight:400;'>"
+            f"{now.strftime('%A, %I:%M:%S %p')}</span></div>",
+            unsafe_allow_html=True
+        )
+
+
 def dashboard():
     products = query_df("SELECT * FROM products")
     sales = query_df("SELECT * FROM sales")
     purchases = query_df("SELECT * FROM purchases ORDER BY id DESC")
     suppliers = query_df("SELECT * FROM suppliers")
 
-    # Header
-    head_left, head_right = st.columns([3.4, 1])
-    with head_left:
-        st.markdown(
-            "<div style='font-size:1.8rem;font-weight:800;color:#F2F6FF;'>"
-            "Good evening! 👋</div>"
-            "<div style='color:#A8B6D0;margin-top:2px;'>"
-            "Here's what's happening with your business today.</div>",
-            unsafe_allow_html=True
-        )
-    with head_right:
-        st.markdown(
-            f"<div style='text-align:right;color:#A8B6D0;padding-top:8px;'>"
-            f"📅 {datetime.now().strftime('%d %b %Y')}<br>"
-            f"<span style='font-size:.8rem;'>{datetime.now().strftime('%A, %I:%M %p')}</span>"
-            "</div>",
-            unsafe_allow_html=True
-        )
-
+    # Live header: greeting/date/time update every 60 seconds without reloading the full app.
+    render_live_dashboard_header()
     st.markdown("")
     if sales.empty:
         st.info("No sales data available yet. Add a sale to populate your dashboard.")
@@ -648,14 +660,13 @@ def dashboard():
         with chart_left:
             st.markdown("### 📈 Sales & Profit Trend")
             if not filtered.empty:
+                trend_source = filtered.copy()
+                trend_source["Date"] = trend_source["sale_date"].dt.date
                 trend = (
-                    filtered.groupby(filtered["sale_date"].dt.date, as_index=False)
+                    trend_source.groupby("Date", as_index=False)
                     .agg(Sales=("total", "sum"), Profit=("profit", "sum"))
-                    .rename(columns={"sale_date": "Date"})
+                    .sort_values("Date")
                 )
-                # Groupby on a Series may name the date field differently across pandas versions.
-                if "Date" not in trend.columns:
-                    trend = trend.rename(columns={trend.columns[0]: "Date"})
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(
                     x=trend["Date"], y=trend["Sales"], mode="lines+markers",
@@ -669,13 +680,25 @@ def dashboard():
                     marker=dict(size=4)
                 ))
                 fig.update_layout(
-                    template="plotly_dark", height=330,
+                    template="plotly_dark", height=390,
                     paper_bgcolor="#0D192B", plot_bgcolor="#0D192B",
-                    margin=dict(l=12, r=12, t=20, b=12),
-                    legend=dict(orientation="h", y=1.08, x=0.68),
+                    margin=dict(l=18, r=18, t=38, b=28),
+                    legend=dict(
+                        orientation="h", y=1.12, x=0.52, xanchor="left",
+                        font=dict(size=12, color="#E3ECFF")
+                    ),
                     hovermode="x unified",
-                    xaxis=dict(showgrid=False, color="#A8B6D0"),
-                    yaxis=dict(gridcolor="#233652", color="#A8B6D0")
+                    font=dict(family="Arial, sans-serif", size=12, color="#D8E4F8"),
+                    xaxis=dict(
+                        title=None, showgrid=False, color="#C0CEE5",
+                        tickformat="%d %b", tickfont=dict(size=11),
+                        automargin=True
+                    ),
+                    yaxis=dict(
+                        title=None, gridcolor="#2A3B58", color="#C0CEE5",
+                        tickfont=dict(size=11), separatethousands=True,
+                        automargin=True, zerolinecolor="#425575"
+                    )
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -701,11 +724,22 @@ def dashboard():
                             "#A68BFF", "#F5C451", "#F06FA9"
                         ]
                     )
+                    fig.update_traces(
+                        textposition="inside",
+                        textinfo="percent",
+                        textfont=dict(size=12, color="#FFFFFF"),
+                        marker=dict(line=dict(color="#0D192B", width=2)),
+                        hovertemplate="<b>%{label}</b><br>Sales: ₹%{value:,.0f}<br>Share: %{percent}<extra></extra>"
+                    )
                     fig.update_layout(
-                        template="plotly_dark", height=330,
+                        template="plotly_dark", height=390,
                         paper_bgcolor="#0D192B", plot_bgcolor="#0D192B",
-                        margin=dict(l=5, r=5, t=18, b=5),
-                        legend=dict(font=dict(size=10, color="#DCE6F8"))
+                        margin=dict(l=8, r=8, t=18, b=8),
+                        font=dict(family="Arial, sans-serif", size=11, color="#DCE6F8"),
+                        legend=dict(
+                            font=dict(size=11, color="#DCE6F8"),
+                            orientation="v", x=1.0, y=0.5
+                        )
                     )
                     st.plotly_chart(fig, use_container_width=True)
             else:
@@ -743,8 +777,10 @@ def dashboard():
                     paper_bgcolor="#0D192B", plot_bgcolor="#0D192B",
                     margin=dict(l=5, r=8, t=12, b=8),
                     showlegend=False, coloraxis_showscale=False,
-                    xaxis=dict(gridcolor="#233652", color="#A8B6D0"),
-                    yaxis=dict(color="#A8B6D0")
+                    xaxis=dict(gridcolor="#2A3B58", color="#C0CEE5",
+                               tickfont=dict(size=11), title=None),
+                    yaxis=dict(color="#C0CEE5", tickfont=dict(size=11),
+                               title=None, automargin=True)
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
