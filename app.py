@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 import re
 
@@ -579,7 +580,7 @@ with st.sidebar:
 
 @st.fragment(run_every="60s")
 def render_live_dashboard_header():
-    now = datetime.now()
+    now = datetime.now(ZoneInfo("Asia/Kolkata"))
     if now.hour < 12:
         greeting = "Good Morning"
     elif now.hour < 17:
@@ -591,7 +592,7 @@ def render_live_dashboard_header():
     with head_left:
         st.markdown(
             f"<div style='font-size:1.85rem;font-weight:800;color:#F2F6FF;"
-            f"line-height:1.35;padding-top:8px;overflow-wrap:anywhere;'>{greeting}, Mayank! 👋</div>"
+            f"line-height:1.35;padding-top:8px;overflow-wrap:anywhere;'>{greeting}! 👋</div>"
             "<div style='color:#A8B6D0;margin-top:5px;'>"
             "Here's what's happening with your business today.</div>",
             unsafe_allow_html=True
