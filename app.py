@@ -383,92 +383,155 @@ initialize_database()
 refresh_demo_dates()
 
 
-# CSS DESIGN
+# CSS DESIGN — SMARTSTOCK AI DARK NAVY DASHBOARD
 # =========================================================
 
 st.markdown("""
 <style>
-
-/* APP BACKGROUND */
-.stApp {
-    background: linear-gradient(135deg, #071426 0%, #0A192F 52%, #101B3A 100%) !important;
-    color: #F1F5FF !important;
+:root {
+    --page: #080F1D;
+    --sidebar: #091426;
+    --panel: #101D32;
+    --panel-2: #13233B;
+    --border: #263956;
+    --text: #F2F6FF;
+    --muted: #A8B6D0;
+    --purple: #6D35F5;
+    --blue: #3478F6;
+    --green: #19D6A0;
+    --orange: #FFB84D;
+    --red: #FF5C83;
 }
-
-/* MAIN CONTENT */
+.stApp {
+    background:
+        radial-gradient(ellipse at 60% 0%, rgba(42, 75, 145, .16), transparent 45%),
+        var(--page) !important;
+    color: var(--text) !important;
+}
+[data-testid="stHeader"] {
+    background: rgba(8, 15, 29, .96) !important;
+}
+[data-testid="stToolbar"] { right: 1rem; }
+[data-testid="stDecoration"] { display: none; }
 .block-container {
-    max-width: 1600px;
-    padding-top: 1.5rem;
+    max-width: 1900px;
+    padding-top: 1.25rem;
     padding-bottom: 2rem;
 }
-
-/* SIDEBAR */
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #0B1730 0%, #101D3A 100%) !important;
-    border-right: 1px solid #263D68;
+    background: linear-gradient(180deg, #0A1528 0%, #081222 100%) !important;
+    border-right: 1px solid #1D2D49 !important;
 }
-[data-testid="stSidebar"] * { color: #E8EEFF; }
-
-/* TEXT */
-h1, h2, h3, h4, h5, h6, p, label { color: #EAF1FF; }
-
-/* METRIC CARDS */
+[data-testid="stSidebar"] > div:first-child { padding-top: 1.1rem; }
+[data-testid="stSidebar"] * { color: var(--text); }
+h1, h2, h3, h4, h5, h6 {
+    color: var(--text) !important;
+    letter-spacing: -.025em;
+}
+p, label, [data-testid="stCaptionContainer"] {
+    color: var(--muted);
+}
 [data-testid="stMetric"] {
-    background: linear-gradient(145deg, #14294B, #101E39) !important;
-    border: 1px solid #2B4778 !important;
-    border-radius: 14px !important;
-    padding: 16px !important;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.20);
+    background: linear-gradient(145deg, #142541, #101B30) !important;
+    border: 1px solid #2B4267 !important;
+    border-radius: 13px !important;
+    padding: 15px 16px !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,.12);
+    min-height: 112px;
 }
-[data-testid="stMetricLabel"] { color: #AFC6F5 !important; }
-[data-testid="stMetricValue"] { color: #FFFFFF !important; font-weight: 700; }
-
-/* BUTTONS */
+[data-testid="stMetricLabel"] {
+    color: #B7C5DF !important;
+    font-size: .82rem !important;
+}
+[data-testid="stMetricValue"] {
+    color: #F7FAFF !important;
+    font-weight: 750 !important;
+    font-size: clamp(1.15rem, 1.8vw, 1.8rem) !important;
+}
+[data-testid="stMetricDelta"] { font-size: .75rem !important; }
+[data-testid="stForm"],
+[data-testid="stExpander"],
+[data-testid="stVerticalBlockBorderWrapper"] {
+    background: linear-gradient(145deg, #101D32, #0D192B) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 13px !important;
+}
 div.stButton > button,
 [data-testid="stFormSubmitButton"] button,
 [data-testid="stDownloadButton"] button {
-    background: linear-gradient(135deg, #4938D7, #693DF2) !important;
+    background: linear-gradient(135deg, #7138FF, #4E2BE0) !important;
     color: #FFFFFF !important;
-    border: 1px solid #7566FF !important;
+    border: 1px solid #8057FF !important;
     border-radius: 9px !important;
-    font-weight: 600;
+    font-weight: 650 !important;
+    transition: all .18s ease-in-out;
 }
 div.stButton > button:hover,
 [data-testid="stFormSubmitButton"] button:hover,
 [data-testid="stDownloadButton"] button:hover {
-    background: linear-gradient(135deg, #604BFF, #8455FF) !important;
-    border-color: #A69BFF !important;
-    color: #FFFFFF !important;
+    background: linear-gradient(135deg, #8050FF, #5D3AE8) !important;
+    border-color: #A18BFF !important;
+    transform: translateY(-1px);
 }
-
-/* INPUTS */
 .stTextInput input, .stNumberInput input, .stDateInput input,
-[data-baseweb="select"] > div, .stTextArea textarea {
-    background-color: #101F3C !important;
-    color: #FFFFFF !important;
-    border-color: #304D7D !important;
-    border-radius: 8px !important;
+.stTextArea textarea, [data-baseweb="select"] > div {
+    background: #15243B !important;
+    color: var(--text) !important;
+    border: 1px solid #2A3D5D !important;
+    border-radius: 9px !important;
 }
-
-/* TABS */
-.stTabs [data-baseweb="tab-list"] { gap: 8px; border-bottom: 1px solid #263D68; }
+input::placeholder, textarea::placeholder { color: #91A2C0 !important; }
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+}
 .stTabs [data-baseweb="tab"] {
-    background: #101F3C; border-radius: 8px 8px 0 0; color: #D5E2FF !important;
+    background: #111E33;
+    color: #B7C5DF !important;
+    border-radius: 8px 8px 0 0;
+    padding: 8px 15px;
 }
-.stTabs [aria-selected="true"] { background: #4938D7 !important; color: #FFFFFF !important; }
-
-/* TABLES */
+.stTabs [aria-selected="true"] {
+    color: #FFFFFF !important;
+    border-bottom: 2px solid #7445FF !important;
+}
 [data-testid="stDataFrame"], [data-testid="stTable"] {
-    border: 1px solid #2B4778; border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    overflow: hidden;
 }
-
-/* EXPANDERS, ALERTS, DIVIDERS, LINKS */
-[data-testid="stExpander"] { background: #101F3C; border: 1px solid #2B4778; border-radius: 10px; }
-[data-testid="stAlert"] { border-radius: 10px; }
-hr { border-color: #263D68 !important; }
-a { color: #8EA8FF !important; }
-.js-plotly-plot { border-radius: 12px; }
-
+a { color: #8B9CFF !important; }
+hr { border-color: #233652 !important; }
+[data-testid="stAlert"] {
+    background: #12213A;
+    border: 1px solid #2A4163;
+    border-radius: 10px;
+}
+.js-plotly-plot {
+    border: 1px solid #233652;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #0D192B;
+}
+[data-testid="stSidebar"] [data-testid="stRadio"] label {
+    background: transparent;
+    border-radius: 9px;
+    padding: 5px 8px;
+}
+[data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
+    background: #172744;
+}
+[data-testid="stSidebar"] [data-testid="stRadio"] [aria-checked="true"] {
+    background: linear-gradient(90deg, #5F2FEA, #4023A9);
+    border-radius: 9px;
+}
+[data-testid="stSidebar"] [data-testid="stRadio"] [aria-checked="true"] * {
+    color: white !important;
+}
+@media (max-width: 900px) {
+    .block-container { padding-left: 1rem; padding-right: 1rem; }
+    [data-testid="stMetric"] { padding: 10px !important; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -482,19 +545,23 @@ with st.sidebar:
     st.caption("Inventory Smarter • Grow Faster")
     st.divider()
 
+    nav_options = [
+        " Dashboard",
+        " Inventory",
+        "💰 Sales",
+        "🛒 Purchases",
+        "👥 Suppliers",
+        "📊 Reports",
+        "🤖 AI Assistant",
+        "🔔 Alerts",
+        "⚙️ Settings"
+    ]
+    default_page = st.session_state.pop("active_page", " Dashboard")
+    default_index = nav_options.index(default_page) if default_page in nav_options else 0
     page = st.radio(
         "Navigation",
-        [
-            " Dashboard",
-            " Inventory",
-            "💰 Sales",
-            "🛒 Purchases",
-            "👥 Suppliers",
-            "📊 Reports",
-            "🤖 AI Assistant",
-            "🔔 Alerts",
-            "⚙️ Settings"
-        ],
+        nav_options,
+        index=default_index,
         label_visibility="collapsed"
     )
 
@@ -511,221 +578,258 @@ with st.sidebar:
 
 
 def dashboard():
-
-    st.title("Inventory Dashboard")
-    st.caption("Overview of stock, sales, profit, and alerts.")
-
     products = query_df("SELECT * FROM products")
     sales = query_df("SELECT * FROM sales")
+    purchases = query_df("SELECT * FROM purchases ORDER BY id DESC")
+    suppliers = query_df("SELECT * FROM suppliers")
 
+    # Header
+    head_left, head_right = st.columns([3.4, 1])
+    with head_left:
+        st.markdown(
+            "<div style='font-size:1.8rem;font-weight:800;color:#F2F6FF;'>"
+            "Good evening! 👋</div>"
+            "<div style='color:#A8B6D0;margin-top:2px;'>"
+            "Here's what's happening with your business today.</div>",
+            unsafe_allow_html=True
+        )
+    with head_right:
+        st.markdown(
+            f"<div style='text-align:right;color:#A8B6D0;padding-top:8px;'>"
+            f"📅 {datetime.now().strftime('%d %b %Y')}<br>"
+            f"<span style='font-size:.8rem;'>{datetime.now().strftime('%A, %I:%M %p')}</span>"
+            "</div>",
+            unsafe_allow_html=True
+        )
+
+    st.markdown("")
     if sales.empty:
-        st.info("No sales data available.")
-        return
-
-    sales["sale_date"] = pd.to_datetime(sales["sale_date"])
-
-    minimum_date = sales["sale_date"].min().date()
-    maximum_date = sales["sale_date"].max().date()
-
-    date_range = st.date_input(
-        "📅 Visualization Date Range",
-        value=(minimum_date, maximum_date)
-    )
-
-    if not isinstance(date_range, tuple) or len(date_range) != 2:
-        st.info("Select a start date and an end date.")
-        return
-
-    start_date, end_date = date_range
-
-    filtered = sales[
-        (sales["sale_date"].dt.date >= start_date) &
-        (sales["sale_date"].dt.date <= end_date)
-    ].copy()
-
-    total_stock = int(products["stock"].sum())
-    total_revenue = filtered["total"].sum()
-    total_profit = filtered["profit"].sum()
-
-    low_stock = int(
-        (products["stock"] <= products["reorder_level"]).sum()
-    )
-
-    out_stock = int((products["stock"] <= 0).sum())
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-
-    c1.metric("📦 Total Stock", f"{total_stock:,}")
-    c2.metric("💰 Sales", money(total_revenue))
-    c3.metric("📈 Profit", money(total_profit))
-    c4.metric("⚠️ Low Stock", low_stock)
-    c5.metric("🚨 Out of Stock", out_stock)
-
-    col1, col2 = st.columns([1.65, 1])
-
-    with col1:
-
-        st.markdown("### 📈 Sales & Profit Trend")
-
-        trend = (
-            filtered.groupby("sale_date", as_index=False)
-            .agg(
-                Sales=("total", "sum"),
-                Profit=("profit", "sum")
-            )
+        st.info("No sales data available yet. Add a sale to populate your dashboard.")
+        total_revenue = total_profit = 0
+        filtered = sales.copy()
+    else:
+        sales["sale_date"] = pd.to_datetime(sales["sale_date"], errors="coerce")
+        valid_dates = sales["sale_date"].dropna()
+        today = datetime.now().date()
+        default_start = max(valid_dates.min().date(), today - timedelta(days=6)) if not valid_dates.empty else today
+        date_range = st.date_input(
+            "📅 Visualization Date Range",
+            value=(default_start, today),
+            key="dashboard_date_range"
         )
+        if not isinstance(date_range, tuple) or len(date_range) != 2:
+            st.info("Select a start date and an end date.")
+            return
+        start_date, end_date = date_range
+        filtered = sales[
+            sales["sale_date"].dt.date.between(start_date, end_date)
+        ].copy()
+        total_revenue = float(filtered["total"].sum()) if not filtered.empty else 0
+        total_profit = float(filtered["profit"].sum()) if not filtered.empty else 0
 
-        if not trend.empty:
+    total_stock = int(products["stock"].sum()) if not products.empty else 0
+    low_stock = int((products["stock"] <= products["reorder_level"]).sum()) if not products.empty else 0
+    out_stock = int((products["stock"] <= 0).sum()) if not products.empty else 0
 
-            fig = go.Figure()
+    # Main metrics row
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("📦 Total Stock", f"{total_stock:,}")
+    m2.metric("💰 Sales", money(total_revenue))
+    m3.metric("📈 Profit", money(total_profit))
+    m4.metric("⚠️ Low Stock", low_stock)
+    m5.metric("🚨 Out of Stock", out_stock)
 
-            fig.add_trace(go.Scatter(
-                x=trend["sale_date"],
-                y=trend["Sales"],
-                mode="lines+markers",
-                name="Sales"
-            ))
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-            fig.add_trace(go.Scatter(
-                x=trend["sale_date"],
-                y=trend["Profit"],
-                mode="lines+markers",
-                name="Profit"
-            ))
+    # Main analytics area + compact AI panel on the right, inspired by the reference image.
+    main_area, assistant_area = st.columns([3.2, 1.0], gap="medium")
+    with main_area:
+        chart_left, chart_right = st.columns([1.55, 1])
+        with chart_left:
+            st.markdown("### 📈 Sales & Profit Trend")
+            if not filtered.empty:
+                trend = (
+                    filtered.groupby(filtered["sale_date"].dt.date, as_index=False)
+                    .agg(Sales=("total", "sum"), Profit=("profit", "sum"))
+                    .rename(columns={"sale_date": "Date"})
+                )
+                # Groupby on a Series may name the date field differently across pandas versions.
+                if "Date" not in trend.columns:
+                    trend = trend.rename(columns={trend.columns[0]: "Date"})
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=trend["Date"], y=trend["Sales"], mode="lines+markers",
+                    name="Sales", line=dict(color="#54B8FF", width=3),
+                    marker=dict(size=5), fill="tozeroy",
+                    fillcolor="rgba(84,184,255,0.08)"
+                ))
+                fig.add_trace(go.Scatter(
+                    x=trend["Date"], y=trend["Profit"], mode="lines+markers",
+                    name="Profit", line=dict(color="#FF9C78", width=2.5),
+                    marker=dict(size=4)
+                ))
+                fig.update_layout(
+                    template="plotly_dark", height=330,
+                    paper_bgcolor="#0D192B", plot_bgcolor="#0D192B",
+                    margin=dict(l=12, r=12, t=20, b=12),
+                    legend=dict(orientation="h", y=1.08, x=0.68),
+                    hovermode="x unified",
+                    xaxis=dict(showgrid=False, color="#A8B6D0"),
+                    yaxis=dict(gridcolor="#233652", color="#A8B6D0")
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Your sales trend will appear here after the first sale.")
 
-            fig.update_layout(
-                template="plotly_dark",
-                height=390,
-                hovermode="x unified"
-            )
+        with chart_right:
+            st.markdown("### 🍩 Sales by Category")
+            if not filtered.empty and not products.empty:
+                category_sales = (
+                    filtered.merge(
+                        products[["id", "category"]],
+                        left_on="product_id", right_on="id", how="left"
+                    )
+                    .groupby("category", as_index=False)["total"].sum()
+                )
+                category_sales["category"] = category_sales["category"].fillna("Other")
+                if not category_sales.empty:
+                    fig = px.pie(
+                        category_sales, names="category", values="total",
+                        hole=0.62,
+                        color_discrete_sequence=[
+                            "#39A9FF", "#FF9F76", "#1DD6A1",
+                            "#A68BFF", "#F5C451", "#F06FA9"
+                        ]
+                    )
+                    fig.update_layout(
+                        template="plotly_dark", height=330,
+                        paper_bgcolor="#0D192B", plot_bgcolor="#0D192B",
+                        margin=dict(l=5, r=5, t=18, b=5),
+                        legend=dict(font=dict(size=10, color="#DCE6F8"))
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Category sales will appear here.")
 
-            st.plotly_chart(fig, use_container_width=True)
+        low_col, stock_col = st.columns([1.25, 1])
+        with low_col:
+            st.markdown("### ⚠️ Low Stock Items")
+            if not products.empty:
+                low = products[products["stock"] <= products["reorder_level"]].copy()
+                if low.empty:
+                    st.success("All products have sufficient stock.")
+                else:
+                    low_view = low[["name", "category", "stock", "reorder_level"]].copy()
+                    low_view.columns = ["Product", "Category", "Stock", "Reorder At"]
+                    st.dataframe(low_view, use_container_width=True, hide_index=True, height=220)
+            else:
+                st.info("Add products to monitor stock.")
 
-    with col2:
+        with stock_col:
+            st.markdown("### 📊 Stock by Category")
+            if not products.empty:
+                stock_category = (
+                    products.groupby("category", as_index=False)["stock"].sum()
+                    .sort_values("stock", ascending=True)
+                )
+                fig = px.bar(
+                    stock_category, x="stock", y="category",
+                    orientation="h", text="stock",
+                    color="stock",
+                    color_continuous_scale=["#263A70", "#3478F6", "#6D35F5"]
+                )
+                fig.update_layout(
+                    template="plotly_dark", height=260,
+                    paper_bgcolor="#0D192B", plot_bgcolor="#0D192B",
+                    margin=dict(l=5, r=8, t=12, b=8),
+                    showlegend=False, coloraxis_showscale=False,
+                    xaxis=dict(gridcolor="#233652", color="#A8B6D0"),
+                    yaxis=dict(color="#A8B6D0")
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Stock summary will appear here.")
 
-        st.markdown("### 🍩 Sales by Category")
+        # Lower section
+        bottom_left, bottom_right = st.columns(2)
+        with bottom_left:
+            st.markdown("### 🧾 Recent Sales")
+            if not filtered.empty:
+                recent = filtered.sort_values("sale_date", ascending=False).head(6)
+                cols = ["invoice_no", "product_name", "customer", "total", "sale_date"]
+                recent = recent[[c for c in cols if c in recent.columns]].copy()
+                if "total" in recent.columns:
+                    recent["total"] = recent["total"].apply(money)
+                if "sale_date" in recent.columns:
+                    recent["sale_date"] = pd.to_datetime(recent["sale_date"]).dt.strftime("%d %b %Y")
+                recent.columns = ["Invoice" if c == "invoice_no" else
+                                  "Product" if c == "product_name" else
+                                  "Customer" if c == "customer" else
+                                  "Amount" if c == "total" else
+                                  "Date" if c == "sale_date" else c for c in recent.columns]
+                st.dataframe(recent, use_container_width=True, hide_index=True, height=230)
+            else:
+                st.info("No sales in the selected date range.")
 
-        category_sales = (
-            filtered.merge(
-                products[["id", "category"]],
-                left_on="product_id",
-                right_on="id",
-                how="left"
-            )
-            .groupby("category", as_index=False)["total"]
-            .sum()
+        with bottom_right:
+            st.markdown("### 🛒 Recent Purchases")
+            if not purchases.empty:
+                recent_purchases = purchases.head(6)[
+                    ["purchase_no", "supplier", "total", "purchase_date", "status"]
+                ].copy()
+                recent_purchases["total"] = recent_purchases["total"].apply(money)
+                recent_purchases["purchase_date"] = pd.to_datetime(
+                    recent_purchases["purchase_date"], errors="coerce"
+                ).dt.strftime("%d %b %Y")
+                recent_purchases.columns = ["Purchase ID", "Supplier", "Amount", "Date", "Status"]
+                st.dataframe(recent_purchases, use_container_width=True, hide_index=True, height=230)
+            else:
+                st.info("No purchases recorded yet.")
+
+        # Quick overview tiles
+        st.markdown("### 📌 Business Overview")
+        q1, q2, q3, q4, q5 = st.columns(5)
+        q1.metric("Total Products", f"{len(products):,}")
+        q2.metric("Categories", f"{products['category'].nunique() if not products.empty else 0:,}")
+        q3.metric("Suppliers", f"{len(suppliers):,}")
+        q4.metric("Units Sold", f"{int(filtered['quantity'].sum()) if not filtered.empty else 0:,}")
+        q5.metric("Period Profit", money(total_profit))
+
+    with assistant_area:
+        st.markdown(
+            "<div style='border:1px solid #2B4267;border-radius:16px;"
+            "padding:16px;background:linear-gradient(180deg,#13223B,#0D182B);'>"
+            "<div style='font-size:1.1rem;font-weight:750;color:#F2F6FF;'>🤖 AI Assistant</div>"
+            "<div style='font-size:.78rem;color:#19D6A0;margin:4px 0 12px;'>● Online</div>"
+            "<div style='text-align:center;font-size:4.2rem;line-height:1.2;'>🤖</div>"
+            "<div style='font-size:1.1rem;font-weight:750;text-align:center;color:#F2F6FF;'>"
+            "Hello! 👋<br>How can I help today?</div>"
+            "<div style='text-align:center;color:#A8B6D0;font-size:.82rem;margin-top:8px;'>"
+            "Ask about sales, stock, or profit.</div></div>",
+            unsafe_allow_html=True
         )
-
-        if not category_sales.empty:
-
-            fig = px.pie(
-                category_sales,
-                names="category",
-                values="total",
-                hole=0.6
-            )
-
-            fig.update_layout(
-                template="plotly_dark",
-                height=390
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
-
-    col3, col4 = st.columns(2)
-
-    with col3:
-
-        st.markdown("### 📦 Stock by Category")
-
-        stock_category = (
-            products.groupby("category", as_index=False)["stock"]
-            .sum()
-            .sort_values("stock")
-        )
-
-        fig = px.bar(
-            stock_category,
-            x="stock",
-            y="category",
-            orientation="h",
-            text="stock"
-        )
-
-        fig.update_layout(
-            template="plotly_dark",
-            height=370
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col4:
-
-        st.markdown("### 💹 Revenue vs Profit")
-
-        compare = (
-            filtered.groupby("sale_date", as_index=False)
-            .agg(
-                Revenue=("total", "sum"),
-                Profit=("profit", "sum")
-            )
-        )
-
-        fig = px.bar(
-            compare,
-            x="sale_date",
-            y=["Revenue", "Profit"],
-            barmode="group"
-        )
-
-        fig.update_layout(
-            template="plotly_dark",
-            height=370
-        )
-
-        st.plotly_chart(fig, use_container_width=True)
-
-    col5, col6 = st.columns(2)
-
-    with col5:
-
-        st.markdown("### 🏆 Top Selling Products")
-
-        top = (
-            filtered.groupby("product_name", as_index=False)["quantity"]
-            .sum()
-            .sort_values("quantity", ascending=False)
-            .head(7)
-        )
-
-        if not top.empty:
-
-            fig = px.bar(
-                top,
-                x="quantity",
-                y="product_name",
-                orientation="h",
-                text="quantity"
-            )
-
-            fig.update_layout(
-                template="plotly_dark",
-                height=350
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
-
-    with col6:
-
-        st.markdown("### ⚠️ Inventory Health")
-
-        healthy = int(
-            (products["stock"] > products["reorder_level"]).sum()
-        )
-
-        st.metric("Healthy Products", healthy)
-        st.metric("Low Stock Products", low_stock)
-        st.metric("Out of Stock Products", out_stock)
+        st.markdown("#### Try a command")
+        for suggestion in [
+            "Show today's sales",
+            "Which product is low in stock?",
+            "Show profit",
+            "Show top selling products"
+        ]:
+            if st.button(suggestion, key="dash_ai_" + suggestion, use_container_width=True):
+                st.session_state["dashboard_ai_command"] = suggestion
+                st.session_state["active_page"] = "🤖 AI Assistant"
+                st.rerun()
+        st.markdown("---")
+        st.caption("Quick actions")
+        if st.button("➕ Add Product", use_container_width=True):
+            st.session_state["active_page"] = " Inventory"
+            st.rerun()
+        if st.button("💰 New Sale", use_container_width=True):
+            st.session_state["active_page"] = "💰 Sales"
+            st.rerun()
+        if st.button("🛒 New Purchase", use_container_width=True):
+            st.session_state["active_page"] = "🛒 Purchases"
+            st.rerun()
 
 
 # =========================================================
@@ -1561,7 +1665,10 @@ def ai_page():
     for example in examples:
         st.code(example, language="text")
 
-    command = st.text_input("Enter your command")
+    command = st.text_input(
+        "Enter your command",
+        value=st.session_state.pop("dashboard_ai_command", "")
+    )
 
     if st.button("🚀 Run Command", type="primary"):
 
