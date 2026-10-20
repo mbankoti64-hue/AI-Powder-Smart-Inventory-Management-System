@@ -415,7 +415,7 @@ st.markdown("""
 [data-testid="stDecoration"] { display: none; }
 .block-container {
     max-width: 1900px;
-    padding-top: 1.25rem;
+    padding-top: 2.8rem !important;
     padding-bottom: 2rem;
 }
 [data-testid="stSidebar"] {
@@ -591,7 +591,7 @@ def render_live_dashboard_header():
     with head_left:
         st.markdown(
             f"<div style='font-size:1.85rem;font-weight:800;color:#F2F6FF;"
-            f"line-height:1.25;'>{greeting}, Mayank! 👋</div>"
+            f"line-height:1.35;padding-top:8px;overflow-wrap:anywhere;'>{greeting}, Mayank! 👋</div>"
             "<div style='color:#A8B6D0;margin-top:5px;'>"
             "Here's what's happening with your business today.</div>",
             unsafe_allow_html=True
@@ -658,7 +658,7 @@ def dashboard():
     with main_area:
         chart_left, chart_right = st.columns([1.55, 1])
         with chart_left:
-            st.markdown("### 📈 Sales & Profit Trend")
+            st.markdown("<h3 style='font-size:1.22rem;margin-bottom:8px;'>📈 Sales &amp; Profit Trend</h3>", unsafe_allow_html=True)
             if not filtered.empty:
                 trend_source = filtered.copy()
                 trend_source["Date"] = trend_source["sale_date"].dt.date
@@ -680,9 +680,9 @@ def dashboard():
                     marker=dict(size=4)
                 ))
                 fig.update_layout(
-                    template="plotly_dark", height=390,
-                    paper_bgcolor="#0D192B", plot_bgcolor="#0D192B",
-                    margin=dict(l=18, r=18, t=38, b=28),
+                    template="plotly_dark", height=360,
+                    paper_bgcolor="#07111F", plot_bgcolor="#07111F",
+                    margin=dict(l=28, r=16, t=34, b=34),
                     legend=dict(
                         orientation="h", y=1.12, x=0.52, xanchor="left",
                         font=dict(size=12, color="#E3ECFF")
@@ -690,14 +690,16 @@ def dashboard():
                     hovermode="x unified",
                     font=dict(family="Arial, sans-serif", size=12, color="#D8E4F8"),
                     xaxis=dict(
-                        title=None, showgrid=False, color="#C0CEE5",
-                        tickformat="%d %b", tickfont=dict(size=11),
-                        automargin=True
+                        title=None, showgrid=True, gridcolor="rgba(77,100,137,0.18)",
+                        color="#D3DDF0", tickformat="%d %b",
+                        tickfont=dict(size=11), automargin=True,
+                        linecolor="#263956", zerolinecolor="#263956"
                     ),
                     yaxis=dict(
-                        title=None, gridcolor="#2A3B58", color="#C0CEE5",
+                        title=None, gridcolor="rgba(111,132,164,0.28)", color="#D3DDF0",
                         tickfont=dict(size=11), separatethousands=True,
-                        automargin=True, zerolinecolor="#425575"
+                        automargin=True, zerolinecolor="#425575",
+                        tickformat="~s"
                     )
                 )
                 st.plotly_chart(fig, use_container_width=True)
@@ -705,7 +707,7 @@ def dashboard():
                 st.info("Your sales trend will appear here after the first sale.")
 
         with chart_right:
-            st.markdown("### 🍩 Sales by Category")
+            st.markdown("<h3 style='font-size:1.22rem;margin-bottom:8px;'>🍩 Sales by Category</h3>", unsafe_allow_html=True)
             if not filtered.empty and not products.empty:
                 category_sales = (
                     filtered.merge(
@@ -718,7 +720,7 @@ def dashboard():
                 if not category_sales.empty:
                     fig = px.pie(
                         category_sales, names="category", values="total",
-                        hole=0.62,
+                        hole=0.58,
                         color_discrete_sequence=[
                             "#39A9FF", "#FF9F76", "#1DD6A1",
                             "#A68BFF", "#F5C451", "#F06FA9"
@@ -732,9 +734,9 @@ def dashboard():
                         hovertemplate="<b>%{label}</b><br>Sales: ₹%{value:,.0f}<br>Share: %{percent}<extra></extra>"
                     )
                     fig.update_layout(
-                        template="plotly_dark", height=390,
-                        paper_bgcolor="#0D192B", plot_bgcolor="#0D192B",
-                        margin=dict(l=8, r=8, t=18, b=8),
+                        template="plotly_dark", height=360,
+                        paper_bgcolor="#07111F", plot_bgcolor="#07111F",
+                        margin=dict(l=4, r=4, t=16, b=8),
                         font=dict(family="Arial, sans-serif", size=11, color="#DCE6F8"),
                         legend=dict(
                             font=dict(size=11, color="#DCE6F8"),
