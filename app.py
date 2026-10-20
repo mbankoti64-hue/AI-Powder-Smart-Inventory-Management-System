@@ -383,25 +383,19 @@ initialize_database()
 refresh_demo_dates()
 
 
-# CSS DESIGN=======================
 # CSS DESIGN
 # =========================================================
 
 st.markdown("""
 <style>
 
-/* MAIN APP BACKGROUND */
+/* APP BACKGROUND */
 .stApp {
-    background: linear-gradient(
-        135deg,
-        #071426 0%,
-        #0A192F 50%,
-        #101B3A 100%
-    );
-    color: #F1F5FF;
+    background: linear-gradient(135deg, #071426 0%, #0A192F 52%, #101B3A 100%) !important;
+    color: #F1F5FF !important;
 }
 
-/* MAIN CONTENT AREA */
+/* MAIN CONTENT */
 .block-container {
     max-width: 1600px;
     padding-top: 1.5rem;
@@ -410,198 +404,75 @@ st.markdown("""
 
 /* SIDEBAR */
 [data-testid="stSidebar"] {
-    background: linear-gradient(
-        180deg,
-        #0B1730 0%,
-        #101D3A 100%
-    );
+    background: linear-gradient(180deg, #0B1730 0%, #101D3A 100%) !important;
     border-right: 1px solid #263D68;
 }
+[data-testid="stSidebar"] * { color: #E8EEFF; }
 
-[data-testid="stSidebar"] * {
-    color: #E8EEFF;
-}
-
-/* HEADINGS */
-h1, h2, h3, h4 {
-    color: #F1F5FF !important;
-}
-
-/* NORMAL TEXT */
-p, label, span {
-    color: #D5E2FF;
-}
+/* TEXT */
+h1, h2, h3, h4, h5, h6, p, label { color: #EAF1FF; }
 
 /* METRIC CARDS */
-div[data-testid="stMetric"] {
-    background: linear-gradient(
-        145deg,
-        #14294B,
-        #101E39
-    );
-    border: 1px solid #2B4778;
-    border-radius: 14px;
-    padding: 16px;
+[data-testid="stMetric"] {
+    background: linear-gradient(145deg, #14294B, #101E39) !important;
+    border: 1px solid #2B4778 !important;
+    border-radius: 14px !important;
+    padding: 16px !important;
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.20);
 }
-
-/* METRIC LABEL */
-div[data-testid="stMetricLabel"] {
-    color: #AFC6F5 !important;
-}
-
-/* METRIC VALUE */
-div[data-testid="stMetricValue"] {
-    color: #FFFFFF !important;
-    font-weight: 700;
-}
+[data-testid="stMetricLabel"] { color: #AFC6F5 !important; }
+[data-testid="stMetricValue"] { color: #FFFFFF !important; font-weight: 700; }
 
 /* BUTTONS */
-div.stButton > button {
-    background: linear-gradient(
-        135deg,
-        #4938D7,
-        #693DF2
-    );
+div.stButton > button,
+[data-testid="stFormSubmitButton"] button,
+[data-testid="stDownloadButton"] button {
+    background: linear-gradient(135deg, #4938D7, #693DF2) !important;
     color: #FFFFFF !important;
-    border: 1px solid #7566FF;
-    border-radius: 9px;
-    padding: 8px 16px;
+    border: 1px solid #7566FF !important;
+    border-radius: 9px !important;
     font-weight: 600;
-    transition: 0.2s ease;
 }
-
-/* BUTTON HOVER */
-div.stButton > button:hover {
-    background: linear-gradient(
-        135deg,
-        #604BFF,
-        #8455FF
-    );
-    border-color: #A69BFF;
+div.stButton > button:hover,
+[data-testid="stFormSubmitButton"] button:hover,
+[data-testid="stDownloadButton"] button:hover {
+    background: linear-gradient(135deg, #604BFF, #8455FF) !important;
+    border-color: #A69BFF !important;
     color: #FFFFFF !important;
 }
 
-/* INPUT FIELDS */
-.stTextInput input,
-.stNumberInput input,
-.stDateInput input,
-.stSelectbox div[data-baseweb="select"] {
+/* INPUTS */
+.stTextInput input, .stNumberInput input, .stDateInput input,
+[data-baseweb="select"] > div, .stTextArea textarea {
     background-color: #101F3C !important;
     color: #FFFFFF !important;
     border-color: #304D7D !important;
-    border-radius: 8px;
+    border-radius: 8px !important;
 }
 
 /* TABS */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 8px;
-    border-bottom: 1px solid #263D68;
-}
-
+.stTabs [data-baseweb="tab-list"] { gap: 8px; border-bottom: 1px solid #263D68; }
 .stTabs [data-baseweb="tab"] {
-    background: #101F3C;
-    border-radius: 8px 8px 0 0;
-    color: #D5E2FF;
+    background: #101F3C; border-radius: 8px 8px 0 0; color: #D5E2FF !important;
+}
+.stTabs [aria-selected="true"] { background: #4938D7 !important; color: #FFFFFF !important; }
+
+/* TABLES */
+[data-testid="stDataFrame"], [data-testid="stTable"] {
+    border: 1px solid #2B4778; border-radius: 10px; overflow: hidden;
 }
 
-/* DATA TABLE */
-[data-testid="stDataFrame"] {
-    border: 1px solid #2B4778;
-    border-radius: 10px;
-    overflow: hidden;
-}
-
-/* ALERT BOX */
-.alert-box {
-    background: #14294B;
-    color: #FFFFFF;
-    border: 1px solid #35568C;
-    padding: 14px;
-    border-radius: 10px;
-}
-
-/* EXPANDER */
-[data-testid="stExpander"] {
-    background: #101F3C;
-    border: 1px solid #2B4778;
-    border-radius: 10px;
-}
-
-/* DIVIDERS */
-hr {
-    border-color: #263D68;
-}
-
-/* LINKS */
-a {
-    color: #8EA8FF !important;
-}
-
-/* SUCCESS MESSAGES */
-[data-testid="stAlert"] {
-    border-radius: 10px;
-}
+/* EXPANDERS, ALERTS, DIVIDERS, LINKS */
+[data-testid="stExpander"] { background: #101F3C; border: 1px solid #2B4778; border-radius: 10px; }
+[data-testid="stAlert"] { border-radius: 10px; }
+hr { border-color: #263D68 !important; }
+a { color: #8EA8FF !important; }
+.js-plotly-plot { border-radius: 12px; }
 
 </style>
 """, unsafe_allow_html=True)
 
-# st.markdown("""
-# <style>
-# .stApp {
-#     background: #000000;
-#     color: #ffffff;
-# }
-# .block-container {
-#     max-width: 1450px;
-#     padding-top: 1.5rem;
-#     padding-bottom: 2rem;
-# }
-# [data-testid="stSidebar"] {
-#     background: #111111;
-#     border-right: 1px solid #333333;
-# }
-# [data-testid="stSidebar"] * {
-#     color: #ffffff;
-# }
-# div[data-testid="stMetric"] {
-#     background: #111111;
-#     border: 1px solid #333333;
-#     border-radius: 8px;
-#     padding: 14px;
-# }
-# div[data-testid="stMetricLabel"] {
-#     color: #cccccc !important;
-# }
-# div[data-testid="stMetricValue"] {
-#     color: #ffffff !important;
-# }
-# div.stButton > button {
-#     background: #222222;
-#     color: #ffffff;
-#     border: 1px solid #444444;
-#     border-radius: 6px;
-# }
-# div.stButton > button:hover {
-#     background: #333333;
-#     border-color: #777777;
-#     color: #ffffff;
-# }
-# h1, h2, h3 {
-#     color: #ffffff;
-# }
-# .alert-box {
-#     background: #111111;
-#     color: #ffffff;
-#     border: 1px solid #333333;
-#     padding: 14px;
-#     border-radius: 8px;
-# }
-# </style>
-""", unsafe_allow_html=True)
 
-
-# =========================================================
 # SIDEBAR NAVIGATION
 # =========================================================
 
