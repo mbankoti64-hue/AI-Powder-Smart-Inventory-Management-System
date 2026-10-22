@@ -918,13 +918,27 @@ def inventory_page():
 
             if st.button("🗑️ Delete Product"):
 
-                execute(
-                    "DELETE FROM products WHERE name=?",
-                    (delete_name,)
-                )
-
-                st.success("Product deleted.")
-                st.rerun()
+                selected_product = display[display["name"] == delete_name].iloc[0]
+                product_id = int(selected_product["id"])
+                conn = db()
+                try:
+                    cur = conn.cursor()
+                    history_count = cur.execute(
+                        "SELECT (SELECT COUNT(*) FROM sales WHERE product_id=?) + (SELECT COUNT(*) FROM purchases WHERE product_id=?)",
+                        (product_id, product_id)
+                    ).fetchone()[0]
+                    if history_count:
+                        st.error("This product has sales/purchase history. To preserve reports, set its stock to 0 instead of deleting it.")
+                    else:
+                        cur.execute("DELETE FROM products WHERE id=?", (product_id,))
+                        conn.commit()
+                        st.success("Product deleted.")
+                        st.rerun()
+                except Exception as e:
+                    conn.rollback()
+                    st.error(f"Could not delete product: {e}")
+                finally:
+                    conn.close()
 
     with tab2:
 
@@ -1215,15 +1229,13 @@ def sales_page():
                             datetime.now().date().isoformat()
                         ))
 
+                        cur.execute("BEGIN IMMEDIATE")
                         cur.execute("""
-                            UPDATE products
-                            SET stock=stock-?, updated_at=?
-                            WHERE id=?
-                        """, (
-                            quantity,
-                            datetime.now().isoformat(),
-                            product["id"]
-                        ))
+                            UPDATE products SET stock=stock-?, updated_at=?
+                            WHERE id=? AND stock>=?
+                        """, (int(quantity), datetime.now().isoformat(), int(product["id"]), int(quantity)))
+                        if cur.rowcount != 1:
+                            raise ValueError("Insufficient stock. Refresh the page and try again.")
 
                         if customer.strip():
 
@@ -1283,143 +1295,111 @@ def sales_page():
 # =========================================================
 
 def purchases_page():
-
     st.markdown("# 🛒 Purchase Management")
-
-    products = query_df(
-        "SELECT * FROM products ORDER BY name"
-    )
-
-    suppliers = query_df(
-        "SELECT * FROM suppliers ORDER BY name"
-    )
-
-    tab1, tab2 = st.tabs([
-        "➕ New Purchase",
-        "📜 Purchase History"
-    ])
+    st.caption("Purchase entries update inventory automatically.")
+    products = query_df("SELECT * FROM products ORDER BY name")
+    suppliers = query_df("SELECT * FROM suppliers ORDER BY name")
+    tab1, tab2 = st.tabs(["➕ New Purchase", "📜 Purchase History"])
 
     with tab1:
-
-        if products.empty:
-
-            st.warning("Add a product first.")
-
-        elif suppliers.empty:
-
-            st.warning("Add a supplier first.")
-
+        mode = st.radio("Purchase type", ["Existing product", "New product"], horizontal=True)
+        supplier_names = suppliers["name"].tolist() if not suppliers.empty else []
+        if not supplier_names:
+            st.warning("Pehle Suppliers section mein kam se kam ek supplier add karein.")
+        elif mode == "Existing product":
+            if products.empty:
+                st.info("Inventory empty hai. 'New product' select karein.")
+            else:
+                with st.form("purchase_existing_form"):
+                    product_name = st.selectbox("Product", products["name"].tolist())
+                    product = products[products["name"] == product_name].iloc[0]
+                    old_supplier = str(product["supplier"] or "")
+                    supplier_index = supplier_names.index(old_supplier) if old_supplier in supplier_names else 0
+                    supplier = st.selectbox("Supplier", supplier_names, index=supplier_index)
+                    quantity = st.number_input("Quantity purchased", min_value=1, value=1, step=1)
+                    unit_cost = st.number_input("Purchase cost per unit (₹)", min_value=0.0, value=float(product["purchase_price"] or 0), step=100.0)
+                    change_selling = st.checkbox("Also change selling price for future sales", value=False)
+                    selling_price = float(product["selling_price"] or 0)
+                    if change_selling:
+                        selling_price = st.number_input("New selling price per unit (₹)", min_value=0.0, value=selling_price, step=100.0)
+                    st.info(f"Current stock: {int(product['stock'])} | Purchase total: ₹{int(quantity)*float(unit_cost):,.2f}")
+                    submit = st.form_submit_button("📥 Complete Purchase", type="primary")
+                if submit:
+                    purchase_no = "PUR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
+                    conn = db()
+                    try:
+                        cur = conn.cursor()
+                        cur.execute("BEGIN IMMEDIATE")
+                        cur.execute("""INSERT INTO purchases(purchase_no,product_id,product_name,supplier,quantity,unit_cost,total,purchase_date,status)
+                                      VALUES(?,?,?,?,?,?,?,?,?)""", (purchase_no, int(product["id"]), product["name"], supplier, int(quantity), float(unit_cost), int(quantity)*float(unit_cost), datetime.now().date().isoformat(), "Completed"))
+                        if change_selling:
+                            cur.execute("""UPDATE products SET stock=stock+?, purchase_price=?, selling_price=?, supplier=?, updated_at=? WHERE id=?""", (int(quantity), float(unit_cost), float(selling_price), supplier, datetime.now().isoformat(), int(product["id"])))
+                        else:
+                            cur.execute("""UPDATE products SET stock=stock+?, purchase_price=?, supplier=?, updated_at=? WHERE id=?""", (int(quantity), float(unit_cost), supplier, datetime.now().isoformat(), int(product["id"])))
+                        if cur.rowcount != 1:
+                            raise ValueError("Product inventory record was not updated.")
+                        conn.commit()
+                        st.success(f"Purchase saved. {product['name']} stock: {int(product['stock'])} → {int(product['stock'])+int(quantity)}")
+                        st.rerun()
+                    except Exception as e:
+                        conn.rollback()
+                        st.error(f"Purchase failed; changes rolled back. {e}")
+                    finally:
+                        conn.close()
         else:
-
-            with st.form("purchase_form"):
-
-                product_name = st.selectbox(
-                    "Product",
-                    products["name"].tolist()
-                )
-
-                product = products[
-                    products["name"] == product_name
-                ].iloc[0]
-
-                supplier = st.selectbox(
-                    "Supplier",
-                    suppliers["name"].tolist()
-                )
-
-                quantity = st.number_input(
-                    "Quantity",
-                    min_value=1,
-                    value=1
-                )
-
-                unit_cost = st.number_input(
-                    "Unit Cost",
-                    min_value=0.0,
-                    value=float(product["purchase_price"]),
-                    step=100.0
-                )
-
-                submit = st.form_submit_button("📥 Complete Purchase")
-
-            if submit:
-
-                purchase_no = (
-                    "PUR-" +
-                    datetime.now().strftime("%Y%m%d%H%M%S%f")
-                )
-
-                total = quantity * unit_cost
-
-                conn = db()
-
-                try:
-
-                    cur = conn.cursor()
-
-                    cur.execute("""
-                        INSERT INTO purchases(
-                            purchase_no, product_id, product_name,
-                            supplier, quantity, unit_cost,
-                            total, purchase_date, status
-                        )
-                        VALUES(?,?,?,?,?,?,?,?,?)
-                    """, (
-                        purchase_no,
-                        product["id"],
-                        product["name"],
-                        supplier,
-                        quantity,
-                        unit_cost,
-                        total,
-                        datetime.now().date().isoformat(),
-                        "Completed"
-                    ))
-
-                    cur.execute("""
-                        UPDATE products
-                        SET stock=stock+?,
-                            purchase_price=?,
-                            supplier=?,
-                            updated_at=?
-                        WHERE id=?
-                    """, (
-                        quantity,
-                        unit_cost,
-                        supplier,
-                        datetime.now().isoformat(),
-                        product["id"]
-                    ))
-
-                    conn.commit()
-
-                    st.success("Purchase completed.")
-                    st.rerun()
-
-                except Exception as e:
-
-                    conn.rollback()
-                    st.error(f"Purchase failed: {e}")
-
-                finally:
-                    conn.close()
+            with st.form("purchase_new_product_form"):
+                c1,c2=st.columns(2)
+                sku=c1.text_input("SKU (optional)")
+                name=c2.text_input("Product name")
+                c1,c2,c3=st.columns(3)
+                brand=c1.text_input("Brand")
+                category=c2.text_input("Category")
+                supplier=c3.selectbox("Supplier", supplier_names)
+                c1,c2,c3=st.columns(3)
+                quantity=c1.number_input("Opening purchase quantity", min_value=1, value=1, step=1)
+                unit_cost=c2.number_input("Purchase cost per unit (₹)", min_value=0.0, value=0.0, step=100.0)
+                selling_price=c3.number_input("Selling price per unit (₹)", min_value=0.0, value=0.0, step=100.0)
+                reorder=st.number_input("Low-stock alert level", min_value=0, value=5, step=1)
+                st.caption(f"Purchase total: ₹{int(quantity)*float(unit_cost):,.2f}")
+                submit_new=st.form_submit_button("📥 Create Product & Complete Purchase", type="primary")
+            if submit_new:
+                if not name.strip():
+                    st.error("Product name is required.")
+                elif selling_price < 0 or unit_cost < 0:
+                    st.error("Prices cannot be negative.")
+                else:
+                    clean_sku=sku.strip() or "SKU-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+                    purchase_no="PUR-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
+                    conn=db()
+                    try:
+                        cur=conn.cursor()
+                        cur.execute("BEGIN IMMEDIATE")
+                        cur.execute("""INSERT INTO products(sku,name,brand,category,purchase_price,selling_price,stock,reorder_level,supplier,created_at,updated_at)
+                                      VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (clean_sku,name.strip(),brand.strip(),category.strip(),float(unit_cost),float(selling_price),int(quantity),int(reorder),supplier,datetime.now().isoformat(),datetime.now().isoformat()))
+                        product_id=cur.lastrowid
+                        cur.execute("""INSERT INTO purchases(purchase_no,product_id,product_name,supplier,quantity,unit_cost,total,purchase_date,status)
+                                      VALUES(?,?,?,?,?,?,?,?,?)""", (purchase_no,product_id,name.strip(),supplier,int(quantity),float(unit_cost),int(quantity)*float(unit_cost),datetime.now().date().isoformat(),"Completed"))
+                        conn.commit()
+                        st.success(f"Product created and purchase saved. Inventory stock is now {int(quantity)} units.")
+                        st.rerun()
+                    except sqlite3.IntegrityError as e:
+                        conn.rollback()
+                        st.error(f"Could not create product. SKU may already exist. {e}")
+                    except Exception as e:
+                        conn.rollback()
+                        st.error(f"Purchase failed; changes rolled back. {e}")
+                    finally:
+                        conn.close()
 
     with tab2:
-
-        data = query_df("""
-            SELECT *
-            FROM purchases
-            ORDER BY id DESC
-        """)
-
-        st.dataframe(
-            data,
-            use_container_width=True,
-            hide_index=True
-        )
+        history=query_df("SELECT purchase_no,product_name,supplier,quantity,unit_cost,total,purchase_date,status FROM purchases ORDER BY id DESC")
+        if history.empty:
+            st.info("No purchases recorded yet.")
+        else:
+            st.dataframe(history,use_container_width=True,hide_index=True)
+            st.download_button("📥 Download Purchase CSV",history.to_csv(index=False),file_name="smartstock_purchases.csv",mime="text/csv")
 
 
-# =========================================================
 # SUPPLIERS
 # =========================================================
 
