@@ -12,9 +12,11 @@ import json
 import shutil
 
 try:
-    from openai import OpenAI
+    from google import genai
+    from google.genai import types
 except ImportError:
-    OpenAI = None
+    genai = None
+    types = None
 
 
 # PAGE CONFIGURATION==============================
@@ -1593,17 +1595,24 @@ def _find_product(product_text, products):
 
 
 
-def _get_openai_client():
-    """Return an OpenAI client when a key is configured; otherwise None."""
-    if OpenAI is None:
+def _get_gemini_client():
+    """Return a Gemini client when a Gemini API key is configured."""
+    if genai is None:
         return None
     api_key = None
     try:
-        api_key = st.secrets.get("OPENAI_API_KEY")
+        api_key = st.secrets.get("GEMINI_API_KEY")
     except Exception:
         api_key = None
-    api_key = api_key or os.getenv("OPENAI_API_KEY")
-    return OpenAI(api_key=api_key) if api_key else None
+    api_key = api_key or os.getenv("GEMINI_API_KEY")
+    return genai.Client(api_key=api_key) if api_key else None
+
+
+def _gemini_model_name():
+    try:
+        return st.secrets.get("GEMINI_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+    except Exception:
+        return os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
 def _ai_database_snapshot():
@@ -1635,12 +1644,12 @@ def _ai_database_snapshot():
 
 def _ai_make_plan(user_text):
     """
-    Convert natural language into a constrained JSON action.
+    Convert natural language into a constrained JSON action using Gemini.
     The model never receives SQL access; Python validates and executes actions.
     """
-    client = _get_openai_client()
+    client = _get_gemini_client()
     if client is None:
-        return None, "OpenAI API key is not configured. Add OPENAI_API_KEY to Streamlit Secrets."
+        return None, "Gemini API not connected. Add GEMINI_API_KEY to Streamlit Secrets."
     snapshot = _ai_database_snapshot()
     system_prompt = """
 You are the advanced conversational AI assistant inside SmartStock AI inventory and sales software.
@@ -1668,50 +1677,51 @@ Rules:
 - Do not claim a change has happened. Python will perform it.
 """
     try:
-        response = client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            response_format={"type": "json_object"},
-            temperature=0.1,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content":
-                    "DATABASE FACTS (JSON): " + json.dumps(snapshot, default=str) +
-                    "\nUSER REQUEST: " + user_text}
-            ],
-            timeout=30
+        response = client.models.generate_content(
+            model=_gemini_model_name(),
+            contents=(
+                "DATABASE FACTS (JSON): " + json.dumps(snapshot, default=str) +
+                "\nUSER REQUEST: " + user_text
+            ),
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                response_mime_type="application/json",
+                temperature=0.1,
+            ),
         )
-        raw = response.choices[0].message.content or "{}"
+        raw = response.text or "{}"
         return json.loads(raw), None
     except Exception as exc:
-        return None, f"OpenAI API error: {exc}"
+        return None, f"Gemini API error: {exc}"
 
 
 def _ai_answer_with_context(question):
-    client = _get_openai_client()
+    client = _get_gemini_client()
     if client is None:
-        return ("I can answer inventory questions when the OpenAI API is connected. "
-                "Please configure OPENAI_API_KEY in Streamlit Secrets.")
+        return ("Gemini API is not connected. Please configure GEMINI_API_KEY "
+                "in Streamlit Secrets.")
     facts = _ai_database_snapshot()
     try:
-        response = client.chat.completions.create(
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            temperature=0.3,
-            messages=[
-                {"role": "system", "content":
-                 "You are the advanced AI assistant for SmartStock AI. Reply in the user's language "
-                 "(Hindi/Hinglish/English). Be helpful and clear. For inventory facts, "
-                 "use ONLY the supplied database snapshot. If data is absent, say so. "
-                 "Never pretend to perform actions. You may answer general knowledge "
-                 "questions, but clearly distinguish general knowledge from store data."},
-                {"role": "user", "content":
-                 "Current store database snapshot:\n" + json.dumps(facts, default=str) +
-                 "\n\nUser asks: " + question}
-            ],
-            timeout=30
+        response = client.models.generate_content(
+            model=_gemini_model_name(),
+            contents=(
+                "Current store database snapshot:\n" + json.dumps(facts, default=str) +
+                "\n\nUser asks: " + question
+            ),
+            config=types.GenerateContentConfig(
+                system_instruction=(
+                    "You are the advanced AI assistant for SmartStock AI. Reply in the user's "
+                    "language (Hindi/Hinglish/English). Be helpful and clear. For inventory facts, "
+                    "use ONLY the supplied database snapshot. If data is absent, say so. "
+                    "Never pretend to perform actions. You may answer general knowledge "
+                    "questions, but clearly distinguish general knowledge from store data."
+                ),
+                temperature=0.3,
+            ),
         )
-        return response.choices[0].message.content or "I couldn't generate a response."
+        return response.text or "I couldn't generate a response."
     except Exception as exc:
-        return f"AI response error: {exc}"
+        return f"Gemini response error: {exc}"
 
 
 def _ai_find_supplier(name):
@@ -1912,11 +1922,11 @@ def process_ai(command):
 def ai_page():
     st.markdown("# 🤖 SmartStock AI Assistant")
     st.caption("Your intelligent inventory and sales assistant. Talk naturally in Hindi, Hinglish or English.")
-    client = _get_openai_client()
+    client = _get_gemini_client()
     if client:
-        st.success("🟢 AI Assistant online — OpenAI API connected")
+        st.success("🟢 AI Assistant online — Gemini API connected")
     else:
-        st.warning("API not connected. Add OPENAI_API_KEY in Streamlit Secrets to enable advanced AI.")
+        st.warning("API not connected. Add GEMINI_API_KEY in Streamlit Secrets to enable advanced AI.")
 
     with st.expander("What can I ask the AI Assistant?"):
         st.markdown("""
