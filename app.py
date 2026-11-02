@@ -7,6 +7,14 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 import re
+import os
+import json
+import shutil
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 
 # PAGE CONFIGURATION==============================
@@ -18,7 +26,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-DB_FILE = Path("smartstock.db")
+# Stable local database location; override with SMARTSTOCK_DB_PATH when needed.
+DB_FILE = Path(os.getenv("SMARTSTOCK_DB_PATH", str(Path(__file__).resolve().parent / "smartstock.db"))).expanduser()
+DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+# One-time migration: preserve an older database created from the launch directory.
+LEGACY_DB_FILE = Path("smartstock.db").resolve()
+if LEGACY_DB_FILE != DB_FILE.resolve() and LEGACY_DB_FILE.exists() and not DB_FILE.exists():
+    shutil.copy2(LEGACY_DB_FILE, DB_FILE)
 
 
 # DATABASE HELPERS==========================
@@ -855,9 +870,10 @@ def dashboard():
             "Show top selling products"
         ]:
             if st.button(suggestion, key="dash_ai_" + suggestion, use_container_width=True):
-                st.session_state["dashboard_ai_command"] = suggestion
-                st.session_state["active_page"] = "🤖 AI Assistant"
+                st.session_state["dashboard_ai_result"] = process_ai(suggestion)
                 st.rerun()
+        if st.session_state.get("dashboard_ai_result"):
+            st.info(st.session_state["dashboard_ai_result"])
         st.markdown("---")
         st.caption("Quick actions")
         if st.button("➕ Add Product", use_container_width=True):
@@ -918,27 +934,13 @@ def inventory_page():
 
             if st.button("🗑️ Delete Product"):
 
-                selected_product = display[display["name"] == delete_name].iloc[0]
-                product_id = int(selected_product["id"])
-                conn = db()
-                try:
-                    cur = conn.cursor()
-                    history_count = cur.execute(
-                        "SELECT (SELECT COUNT(*) FROM sales WHERE product_id=?) + (SELECT COUNT(*) FROM purchases WHERE product_id=?)",
-                        (product_id, product_id)
-                    ).fetchone()[0]
-                    if history_count:
-                        st.error("This product has sales/purchase history. To preserve reports, set its stock to 0 instead of deleting it.")
-                    else:
-                        cur.execute("DELETE FROM products WHERE id=?", (product_id,))
-                        conn.commit()
-                        st.success("Product deleted.")
-                        st.rerun()
-                except Exception as e:
-                    conn.rollback()
-                    st.error(f"Could not delete product: {e}")
-                finally:
-                    conn.close()
+                execute(
+                    "DELETE FROM products WHERE name=?",
+                    (delete_name,)
+                )
+
+                st.success("Product deleted.")
+                st.rerun()
 
     with tab2:
 
@@ -1229,13 +1231,15 @@ def sales_page():
                             datetime.now().date().isoformat()
                         ))
 
-                        cur.execute("BEGIN IMMEDIATE")
                         cur.execute("""
-                            UPDATE products SET stock=stock-?, updated_at=?
-                            WHERE id=? AND stock>=?
-                        """, (int(quantity), datetime.now().isoformat(), int(product["id"]), int(quantity)))
-                        if cur.rowcount != 1:
-                            raise ValueError("Insufficient stock. Refresh the page and try again.")
+                            UPDATE products
+                            SET stock=stock-?, updated_at=?
+                            WHERE id=?
+                        """, (
+                            quantity,
+                            datetime.now().isoformat(),
+                            product["id"]
+                        ))
 
                         if customer.strip():
 
@@ -1295,111 +1299,143 @@ def sales_page():
 # =========================================================
 
 def purchases_page():
+
     st.markdown("# 🛒 Purchase Management")
-    st.caption("Purchase entries update inventory automatically.")
-    products = query_df("SELECT * FROM products ORDER BY name")
-    suppliers = query_df("SELECT * FROM suppliers ORDER BY name")
-    tab1, tab2 = st.tabs(["➕ New Purchase", "📜 Purchase History"])
+
+    products = query_df(
+        "SELECT * FROM products ORDER BY name"
+    )
+
+    suppliers = query_df(
+        "SELECT * FROM suppliers ORDER BY name"
+    )
+
+    tab1, tab2 = st.tabs([
+        "➕ New Purchase",
+        "📜 Purchase History"
+    ])
 
     with tab1:
-        mode = st.radio("Purchase type", ["Existing product", "New product"], horizontal=True)
-        supplier_names = suppliers["name"].tolist() if not suppliers.empty else []
-        if not supplier_names:
-            st.warning("Pehle Suppliers section mein kam se kam ek supplier add karein.")
-        elif mode == "Existing product":
-            if products.empty:
-                st.info("Inventory empty hai. 'New product' select karein.")
-            else:
-                with st.form("purchase_existing_form"):
-                    product_name = st.selectbox("Product", products["name"].tolist())
-                    product = products[products["name"] == product_name].iloc[0]
-                    old_supplier = str(product["supplier"] or "")
-                    supplier_index = supplier_names.index(old_supplier) if old_supplier in supplier_names else 0
-                    supplier = st.selectbox("Supplier", supplier_names, index=supplier_index)
-                    quantity = st.number_input("Quantity purchased", min_value=1, value=1, step=1)
-                    unit_cost = st.number_input("Purchase cost per unit (₹)", min_value=0.0, value=float(product["purchase_price"] or 0), step=100.0)
-                    change_selling = st.checkbox("Also change selling price for future sales", value=False)
-                    selling_price = float(product["selling_price"] or 0)
-                    if change_selling:
-                        selling_price = st.number_input("New selling price per unit (₹)", min_value=0.0, value=selling_price, step=100.0)
-                    st.info(f"Current stock: {int(product['stock'])} | Purchase total: ₹{int(quantity)*float(unit_cost):,.2f}")
-                    submit = st.form_submit_button("📥 Complete Purchase", type="primary")
-                if submit:
-                    purchase_no = "PUR-" + datetime.now().strftime("%Y%m%d%H%M%S%f")
-                    conn = db()
-                    try:
-                        cur = conn.cursor()
-                        cur.execute("BEGIN IMMEDIATE")
-                        cur.execute("""INSERT INTO purchases(purchase_no,product_id,product_name,supplier,quantity,unit_cost,total,purchase_date,status)
-                                      VALUES(?,?,?,?,?,?,?,?,?)""", (purchase_no, int(product["id"]), product["name"], supplier, int(quantity), float(unit_cost), int(quantity)*float(unit_cost), datetime.now().date().isoformat(), "Completed"))
-                        if change_selling:
-                            cur.execute("""UPDATE products SET stock=stock+?, purchase_price=?, selling_price=?, supplier=?, updated_at=? WHERE id=?""", (int(quantity), float(unit_cost), float(selling_price), supplier, datetime.now().isoformat(), int(product["id"])))
-                        else:
-                            cur.execute("""UPDATE products SET stock=stock+?, purchase_price=?, supplier=?, updated_at=? WHERE id=?""", (int(quantity), float(unit_cost), supplier, datetime.now().isoformat(), int(product["id"])))
-                        if cur.rowcount != 1:
-                            raise ValueError("Product inventory record was not updated.")
-                        conn.commit()
-                        st.success(f"Purchase saved. {product['name']} stock: {int(product['stock'])} → {int(product['stock'])+int(quantity)}")
-                        st.rerun()
-                    except Exception as e:
-                        conn.rollback()
-                        st.error(f"Purchase failed; changes rolled back. {e}")
-                    finally:
-                        conn.close()
+
+        if products.empty:
+
+            st.warning("Add a product first.")
+
+        elif suppliers.empty:
+
+            st.warning("Add a supplier first.")
+
         else:
-            with st.form("purchase_new_product_form"):
-                c1,c2=st.columns(2)
-                sku=c1.text_input("SKU (optional)")
-                name=c2.text_input("Product name")
-                c1,c2,c3=st.columns(3)
-                brand=c1.text_input("Brand")
-                category=c2.text_input("Category")
-                supplier=c3.selectbox("Supplier", supplier_names)
-                c1,c2,c3=st.columns(3)
-                quantity=c1.number_input("Opening purchase quantity", min_value=1, value=1, step=1)
-                unit_cost=c2.number_input("Purchase cost per unit (₹)", min_value=0.0, value=0.0, step=100.0)
-                selling_price=c3.number_input("Selling price per unit (₹)", min_value=0.0, value=0.0, step=100.0)
-                reorder=st.number_input("Low-stock alert level", min_value=0, value=5, step=1)
-                st.caption(f"Purchase total: ₹{int(quantity)*float(unit_cost):,.2f}")
-                submit_new=st.form_submit_button("📥 Create Product & Complete Purchase", type="primary")
-            if submit_new:
-                if not name.strip():
-                    st.error("Product name is required.")
-                elif selling_price < 0 or unit_cost < 0:
-                    st.error("Prices cannot be negative.")
-                else:
-                    clean_sku=sku.strip() or "SKU-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-                    purchase_no="PUR-"+datetime.now().strftime("%Y%m%d%H%M%S%f")
-                    conn=db()
-                    try:
-                        cur=conn.cursor()
-                        cur.execute("BEGIN IMMEDIATE")
-                        cur.execute("""INSERT INTO products(sku,name,brand,category,purchase_price,selling_price,stock,reorder_level,supplier,created_at,updated_at)
-                                      VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (clean_sku,name.strip(),brand.strip(),category.strip(),float(unit_cost),float(selling_price),int(quantity),int(reorder),supplier,datetime.now().isoformat(),datetime.now().isoformat()))
-                        product_id=cur.lastrowid
-                        cur.execute("""INSERT INTO purchases(purchase_no,product_id,product_name,supplier,quantity,unit_cost,total,purchase_date,status)
-                                      VALUES(?,?,?,?,?,?,?,?,?)""", (purchase_no,product_id,name.strip(),supplier,int(quantity),float(unit_cost),int(quantity)*float(unit_cost),datetime.now().date().isoformat(),"Completed"))
-                        conn.commit()
-                        st.success(f"Product created and purchase saved. Inventory stock is now {int(quantity)} units.")
-                        st.rerun()
-                    except sqlite3.IntegrityError as e:
-                        conn.rollback()
-                        st.error(f"Could not create product. SKU may already exist. {e}")
-                    except Exception as e:
-                        conn.rollback()
-                        st.error(f"Purchase failed; changes rolled back. {e}")
-                    finally:
-                        conn.close()
+
+            with st.form("purchase_form"):
+
+                product_name = st.selectbox(
+                    "Product",
+                    products["name"].tolist()
+                )
+
+                product = products[
+                    products["name"] == product_name
+                ].iloc[0]
+
+                supplier = st.selectbox(
+                    "Supplier",
+                    suppliers["name"].tolist()
+                )
+
+                quantity = st.number_input(
+                    "Quantity",
+                    min_value=1,
+                    value=1
+                )
+
+                unit_cost = st.number_input(
+                    "Unit Cost",
+                    min_value=0.0,
+                    value=float(product["purchase_price"]),
+                    step=100.0
+                )
+
+                submit = st.form_submit_button("📥 Complete Purchase")
+
+            if submit:
+
+                purchase_no = (
+                    "PUR-" +
+                    datetime.now().strftime("%Y%m%d%H%M%S%f")
+                )
+
+                total = quantity * unit_cost
+
+                conn = db()
+
+                try:
+
+                    cur = conn.cursor()
+
+                    cur.execute("""
+                        INSERT INTO purchases(
+                            purchase_no, product_id, product_name,
+                            supplier, quantity, unit_cost,
+                            total, purchase_date, status
+                        )
+                        VALUES(?,?,?,?,?,?,?,?,?)
+                    """, (
+                        purchase_no,
+                        product["id"],
+                        product["name"],
+                        supplier,
+                        quantity,
+                        unit_cost,
+                        total,
+                        datetime.now().date().isoformat(),
+                        "Completed"
+                    ))
+
+                    cur.execute("""
+                        UPDATE products
+                        SET stock=stock+?,
+                            purchase_price=?,
+                            supplier=?,
+                            updated_at=?
+                        WHERE id=?
+                    """, (
+                        quantity,
+                        unit_cost,
+                        supplier,
+                        datetime.now().isoformat(),
+                        product["id"]
+                    ))
+
+                    conn.commit()
+
+                    st.success("Purchase completed.")
+                    st.rerun()
+
+                except Exception as e:
+
+                    conn.rollback()
+                    st.error(f"Purchase failed: {e}")
+
+                finally:
+                    conn.close()
 
     with tab2:
-        history=query_df("SELECT purchase_no,product_name,supplier,quantity,unit_cost,total,purchase_date,status FROM purchases ORDER BY id DESC")
-        if history.empty:
-            st.info("No purchases recorded yet.")
-        else:
-            st.dataframe(history,use_container_width=True,hide_index=True)
-            st.download_button("📥 Download Purchase CSV",history.to_csv(index=False),file_name="smartstock_purchases.csv",mime="text/csv")
+
+        data = query_df("""
+            SELECT *
+            FROM purchases
+            ORDER BY id DESC
+        """)
+
+        st.dataframe(
+            data,
+            use_container_width=True,
+            hide_index=True
+        )
 
 
+# =========================================================
 # SUPPLIERS
 # =========================================================
 
@@ -1540,161 +1576,209 @@ def reports_page():
 # AI ASSISTANT
 # =========================================================
 
+def _find_product(product_text, products):
+    product_text = re.sub(r"\b(the|of|for|product|stock)\b", " ", product_text, flags=re.I)
+    product_text = re.sub(r"\s+", " ", product_text).strip(" .?!,\"'")
+    if not product_text or products.empty:
+        return None
+    names = products["name"].fillna("").astype(str)
+    exact = products[names.str.casefold() == product_text.casefold()]
+    if not exact.empty:
+        return exact.iloc[0]
+    matches = products[names.str.contains(re.escape(product_text), case=False, na=False)]
+    if len(matches) == 1:
+        return matches.iloc[0]
+    reverse = products[names.str.casefold().apply(lambda n: bool(n) and n in product_text.casefold())]
+    return reverse.iloc[0] if len(reverse) == 1 else None
+
+
+def _ai_api_normalize(command):
+    """Optional OpenAI API: convert free text to a supported command."""
+    api_key = None
+    try:
+        api_key = st.secrets.get("OPENAI_API_KEY")
+    except Exception:
+        api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or OpenAI is None:
+        return command
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content":
+                 "Convert the user's inventory request into one short canonical command. "
+                 "Do not invent product names or quantities. Return a JSON object with one command field. "
+                 "Supported: show total stock; show today's sales; show today's profit; show sales; "
+                 "show profit; show low stock; show out of stock; show top selling products; show products; "
+                 "show stock of PRODUCT; add QTY units of PRODUCT; remove QTY units of PRODUCT; "
+                 "set PRODUCT stock to QTY; set PRODUCT selling price to PRICE; show purchases. "
+                 "If unclear, return the original request as command."},
+                {"role": "user", "content": command}
+            ],
+            temperature=0
+        )
+        data = json.loads(response.choices[0].message.content or "{}")
+        normalized = str(data.get("command", command)).strip()
+        return normalized[:300] if normalized else command
+    except Exception:
+        return command
+
+
 def process_ai(command):
+    original = str(command or "").strip()
+    if not original:
+        return "Please enter a command."
+    command = _ai_api_normalize(original).lower().strip()
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    products = query_df("SELECT * FROM products ORDER BY name")
 
-    command = command.lower().strip()
+    if any(x in command for x in ["total stock", "stock in shop", "overall stock", "stock quantity"]):
+        total = int(products["stock"].sum()) if not products.empty else 0
+        return f"📦 Current total stock: {total:,} units across {len(products)} products."
 
-    products = query_df("SELECT * FROM products")
+    if any(x in command for x in ["today's sales", "todays sales", "sales today", "today sale", "today revenue"]):
+        data = query_df("SELECT COALESCE(SUM(total),0) AS amount, COALESCE(SUM(quantity),0) AS units FROM sales WHERE date(sale_date)=?", (today,))
+        return f"💰 Today's sales: {money(data.iloc[0]['amount'])} | Units sold: {int(data.iloc[0]['units'])}."
 
-    if "total stock" in command:
-
-        total = products["stock"].sum()
-
-        return f"📦 Current total stock: {int(total):,} units."
+    if any(x in command for x in ["today's profit", "todays profit", "profit today"]):
+        data = query_df("SELECT COALESCE(SUM(profit),0) AS amount FROM sales WHERE date(sale_date)=?", (today,))
+        return f"📈 Today's profit: {money(data.iloc[0]['amount'])}."
 
     if "profit" in command:
+        data = query_df("SELECT COALESCE(SUM(profit),0) AS amount FROM sales")
+        return f"📈 Total recorded profit: {money(data.iloc[0]['amount'])}."
 
-        sales = query_df("SELECT * FROM sales")
+    if any(x in command for x in ["sales", "revenue", "turnover"]):
+        data = query_df("SELECT COALESCE(SUM(total),0) AS amount, COALESCE(SUM(quantity),0) AS units FROM sales")
+        return f"💰 Total recorded sales: {money(data.iloc[0]['amount'])} | Units sold: {int(data.iloc[0]['units'])}."
 
-        return f"📈 Total recorded profit: {money(sales['profit'].sum())}"
-
-    if "sales" in command or "revenue" in command:
-
-        sales = query_df("SELECT * FROM sales")
-
-        return f"💰 Total recorded sales: {money(sales['total'].sum())}"
-
-    if "low stock" in command:
-
-        low = products[
-            products["stock"] <= products["reorder_level"]
-        ]
-
+    if any(x in command for x in ["low stock", "running low", "reorder"]):
+        low = products[products["stock"] <= products["reorder_level"]] if not products.empty else products
         if low.empty:
             return "✅ No low-stock products."
-
         return "⚠️ Low-stock products:\n\n" + "\n".join(
-            f"{row['name']} — {row['stock']} units"
-            for _, row in low.iterrows()
-        )
+            f"• {r['name']} — {int(r['stock'])} units (reorder at {int(r['reorder_level'])})"
+            for _, r in low.iterrows())
 
-    if "out of stock" in command:
+    if any(x in command for x in ["out of stock", "stock finished", "zero stock"]):
+        out = products[products["stock"] <= 0] if not products.empty else products
+        return "✅ No products are out of stock." if out.empty else "🚨 Out-of-stock products:\n\n" + "\n".join("• " + n for n in out["name"].tolist())
 
-        out = products[products["stock"] <= 0]
+    if any(x in command for x in ["top selling", "best selling", "most sold", "popular products"]):
+        data = query_df("SELECT product_name, SUM(quantity) AS units FROM sales GROUP BY product_name ORDER BY units DESC LIMIT 5")
+        return "No sales data available yet." if data.empty else "🏆 Top-selling products:\n\n" + "\n".join(
+            f"• {r['product_name']} — {int(r['units'])} units" for _, r in data.iterrows())
 
-        if out.empty:
-            return "✅ No products are out of stock."
+    if "purchase" in command:
+        data = query_df("SELECT product_name, supplier, quantity, total FROM purchases ORDER BY id DESC LIMIT 10")
+        return "No purchase records found." if data.empty else "🛒 Recent purchases:\n\n" + "\n".join(
+            f"• {r['product_name']} — {int(r['quantity'])} units from {r['supplier']} ({money(r['total'])})"
+            for _, r in data.iterrows())
 
-        return "🚨 Out-of-stock products:\n\n" + "\n".join(
-            out["name"].tolist()
-        )
+    if any(x in command for x in ["show products", "list products", "all products", "product list"]):
+        return "No products have been added yet." if products.empty else "📋 Products and current stock:\n\n" + "\n".join(
+            f"• {r['name']} — {int(r['stock'])} units" for _, r in products.iterrows())
 
-    if "top selling" in command or "best selling" in command:
+    stock_match = re.search(r"(?:show|check|what is|how many|find)\s+(?:the\s+)?(?:stock|quantity)\s+(?:of\s+)?(.+)$", command)
+    if stock_match:
+        row = _find_product(stock_match.group(1), products)
+        return f"📦 {row['name']} currently has {int(row['stock'])} units." if row is not None else "Product not found or name is ambiguous. Enter the full product name."
 
-        sales = query_df("SELECT * FROM sales")
+    add_match = re.search(r"(?:add|increase|restock)\s+(\d+)\s+(?:(?:pieces?|units?|items?|qty)\s+)?(?:of\s+)?(.+)$", command)
+    if add_match:
+        qty, text = int(add_match.group(1)), add_match.group(2)
+        row = _find_product(text, products)
+        if row is None:
+            return "Product not found or name is ambiguous. Please use the exact product name."
+        execute("UPDATE products SET stock=stock+?, updated_at=? WHERE id=?", (qty, datetime.now().isoformat(), int(row["id"])))
+        return f"✅ Added {qty} units to {row['name']}. New stock: {int(row['stock']) + qty}."
 
-        if sales.empty:
-            return "No sales data available."
+    remove_match = re.search(r"(?:remove|decrease|subtract|deduct)\s+(\d+)\s+(?:(?:pieces?|units?|items?|qty)\s+)?(?:of\s+)?(.+)$", command)
+    if remove_match:
+        qty, text = int(remove_match.group(1)), remove_match.group(2)
+        row = _find_product(text, products)
+        if row is None:
+            return "Product not found or name is ambiguous. Please use the exact product name."
+        if qty > int(row["stock"]):
+            return f"❌ Cannot remove {qty}; only {int(row['stock'])} units of {row['name']} are available."
+        execute("UPDATE products SET stock=stock-?, updated_at=? WHERE id=?", (qty, datetime.now().isoformat(), int(row["id"])))
+        return f"✅ Removed {qty} units from {row['name']}. New stock: {int(row['stock']) - qty}."
 
-        top = (
-            sales.groupby("product_name")["quantity"]
-            .sum()
-            .sort_values(ascending=False)
-            .head(5)
-        )
+    price_match = re.search(r"(?:set|update|change)\s+(.+?)\s+(?:selling\s+)?price\s+(?:to|as)\s+(\d+(?:\.\d+)?)", command)
+    if price_match:
+        row = _find_product(price_match.group(1), products)
+        if row is None:
+            return "Product not found or name is ambiguous. Please use the exact product name."
+        new_price = float(price_match.group(2))
+        conn = db()
+        try:
+            cur = conn.cursor()
+            cur.execute("INSERT INTO price_history(product_id, old_price, new_price, changed_at) VALUES(?,?,?,?)",
+                        (int(row["id"]), float(row["selling_price"]), new_price, datetime.now().isoformat()))
+            cur.execute("UPDATE products SET selling_price=?, updated_at=? WHERE id=?",
+                        (new_price, datetime.now().isoformat(), int(row["id"])))
+            conn.commit()
+        finally:
+            conn.close()
+        return f"✅ {row['name']} selling price updated from {money(row['selling_price'])} to {money(new_price)}."
 
-        return "🏆 Top-selling products:\n\n" + "\n".join(
-            f"{name} — {qty} units"
-            for name, qty in top.items()
-        )
+    set_match = re.search(r"(?:set|update|change)\s+(?:the\s+)?(.+?)\s+(?:stock\s+)?(?:to|as)\s+(\d+)\s*(?:units?|pieces?)?", command)
+    if set_match:
+        row = _find_product(set_match.group(1), products)
+        if row is None:
+            return "Product not found or name is ambiguous. Please use the exact product name."
+        qty = int(set_match.group(2))
+        execute("UPDATE products SET stock=?, updated_at=? WHERE id=?", (qty, datetime.now().isoformat(), int(row["id"])))
+        return f"✅ {row['name']} stock set to {qty} units."
 
-    match = re.search(
-        r"(?:add|increase)\s+(\d+)\s+(?:pieces?|units?).*?(.+)",
-        command
-    )
-
-    if match:
-
-        qty = int(match.group(1))
-
-        product_text = (
-            match.group(2)
-            .replace("of", "")
-            .strip()
-        )
-
-        found = products[
-            products["name"].str.lower().str.contains(
-                re.escape(product_text),
-                na=False
-            )
-        ]
-
-        if not found.empty:
-
-            row = found.iloc[0]
-
-            execute("""
-                UPDATE products
-                SET stock=stock+?, updated_at=?
-                WHERE id=?
-            """, (
-                qty,
-                datetime.now().isoformat(),
-                row["id"]
-            ))
-
-            return f"✅ Added {qty} units to {row['name']}."
-
-        return "Product not found. Check the product name."
-
-    return (
-        "🤖 Try these commands:\n\n"
-        "• Show total stock\n"
-        "• Show sales\n"
-        "• Show profit\n"
-        "• Show low stock\n"
-        "• Show out of stock\n"
-        "• Show top selling products\n"
-        "• Add 20 pieces of OnePlus Buds"
-    )
+    return ("🤖 I couldn't understand that command. Try:\n\n"
+            "• Show total stock\n• Show today's sales\n• Show today's profit\n"
+            "• Show sales / Show profit\n• Show low stock / Show out of stock\n"
+            "• Show top selling products\n• Show products\n"
+            "• Show stock of OnePlus Buds\n• Add 20 pieces of OnePlus Buds\n"
+            "• Remove 2 units of OnePlus Buds\n• Set OnePlus Buds stock to 25\n"
+            "• Set OnePlus Buds selling price to 4299")
 
 
 def ai_page():
-
     st.markdown("# 🤖 SmartStock AI Assistant")
-
-    st.caption(
-        "Use natural-language commands to interact with inventory."
-    )
-
-    st.success("🟢 AI Assistant Online")
+    st.caption("Ask about stock, sales, profit, purchases, or update product information.")
+    try:
+        api_enabled = bool(st.secrets.get("OPENAI_API_KEY"))
+    except Exception:
+        api_enabled = bool(os.getenv("OPENAI_API_KEY"))
+    if api_enabled and OpenAI is not None:
+        st.success("🟢 AI Assistant Online — OpenAI API enabled")
+    else:
+        st.success("🟢 AI Assistant Online — Built-in command mode")
+        st.caption("Optional: add OPENAI_API_KEY in Streamlit Secrets for natural-language command understanding.")
 
     st.markdown("### Example Commands")
-
     examples = [
-        "Show total stock",
-        "Show sales",
-        "Show profit",
-        "Show low stock",
-        "Show top selling products",
-        "Add 20 pieces of OnePlus Buds"
+        "Show total stock", "Show today's sales", "Show today's profit",
+        "Show sales", "Show profit", "Show low stock", "Show out of stock",
+        "Show top selling products", "Show products", "Show stock of OnePlus Buds",
+        "Add 20 pieces of OnePlus Buds", "Remove 2 units of OnePlus Buds",
+        "Set OnePlus Buds stock to 25", "Set OnePlus Buds selling price to 4299",
+        "Show recent purchases"
     ]
-
     for example in examples:
         st.code(example, language="text")
 
-    command = st.text_input(
-        "Enter your command",
-        value=st.session_state.pop("dashboard_ai_command", "")
-    )
-
+    command = st.text_input("Enter your command",
+                            value=st.session_state.pop("dashboard_ai_command", ""),
+                            key="ai_command_input")
     if st.button("🚀 Run Command", type="primary"):
-
         if command.strip():
-
             result = process_ai(command)
+            st.session_state["last_ai_result"] = result
             st.info(result)
+        else:
+            st.warning("Please enter a command.")
+    elif st.session_state.get("last_ai_result"):
+        st.info(st.session_state["last_ai_result"])
 
 
 # =========================================================
