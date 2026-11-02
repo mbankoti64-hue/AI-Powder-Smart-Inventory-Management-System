@@ -1592,193 +1592,377 @@ def _find_product(product_text, products):
     return reverse.iloc[0] if len(reverse) == 1 else None
 
 
-def _ai_api_normalize(command):
-    """Optional OpenAI API: convert free text to a supported command."""
+
+def _get_openai_client():
+    """Return an OpenAI client when a key is configured; otherwise None."""
+    if OpenAI is None:
+        return None
     api_key = None
     try:
         api_key = st.secrets.get("OPENAI_API_KEY")
     except Exception:
-        api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key or OpenAI is None:
-        return command
+        api_key = None
+    api_key = api_key or os.getenv("OPENAI_API_KEY")
+    return OpenAI(api_key=api_key) if api_key else None
+
+
+def _ai_database_snapshot():
+    """Small, factual database snapshot for conversational answers."""
+    products = query_df("""
+        SELECT name, brand, category, purchase_price, selling_price,
+               stock, reorder_level, supplier
+        FROM products ORDER BY name LIMIT 100
+    """)
+    suppliers = query_df("SELECT name, phone, email, address FROM suppliers ORDER BY name LIMIT 100")
+    sales = query_df("""
+        SELECT COUNT(*) AS bills, COALESCE(SUM(total),0) AS revenue,
+               COALESCE(SUM(profit),0) AS profit,
+               COALESCE(SUM(quantity),0) AS units
+        FROM sales
+    """)
+    purchases = query_df("""
+        SELECT COUNT(*) AS entries, COALESCE(SUM(total),0) AS amount,
+               COALESCE(SUM(quantity),0) AS units
+        FROM purchases
+    """)
+    return {
+        "products": products.to_dict(orient="records"),
+        "suppliers": suppliers.to_dict(orient="records"),
+        "sales_summary": sales.iloc[0].to_dict() if not sales.empty else {},
+        "purchase_summary": purchases.iloc[0].to_dict() if not purchases.empty else {},
+    }
+
+
+def _ai_make_plan(user_text):
+    """
+    Convert natural language into a constrained JSON action.
+    The model never receives SQL access; Python validates and executes actions.
+    """
+    client = _get_openai_client()
+    if client is None:
+        return None, "OpenAI API key is not configured. Add OPENAI_API_KEY to Streamlit Secrets."
+    snapshot = _ai_database_snapshot()
+    system_prompt = """
+You are the advanced conversational AI assistant inside SmartStock AI inventory and sales software.
+Understand Hindi, Hinglish and English. Be friendly, concise and practical.
+Return ONLY valid JSON with keys:
+action, product_name, sku, brand, category, purchase_price, selling_price,
+quantity, reorder_level, supplier, supplier_name, phone, email, address,
+new_name, new_phone, new_email, new_address, customer, date_range, question.
+Allowed action values:
+answer, list_products, list_suppliers, stock_summary, low_stock, out_of_stock,
+sales_summary, today_sales, profit_summary, top_products, purchase_summary,
+add_product, add_stock, remove_stock, set_stock, set_price, add_supplier,
+update_supplier, delete_supplier, delete_product, add_purchase, record_sale,
+product_details, supplier_details, recent_sales, recent_purchases.
+Rules:
+- Use answer for general questions or questions unrelated to the database.
+- For database questions, choose the best matching action.
+- Never invent names, quantities, prices, phone numbers, emails or addresses.
+- For add_product require product_name; include only fields the user supplied.
+- For add_supplier require supplier_name; include only supplied contact details.
+- For stock/purchase/sale changes, extract exact product_name and quantity.
+- For delete_supplier/delete_product, identify exact name; Python will ask confirmation.
+- For ambiguous/missing details, use action=answer and ask one concise clarification.
+- question should contain the user's actual question for answer action.
+- Do not claim a change has happened. Python will perform it.
+"""
     try:
-        client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             response_format={"type": "json_object"},
+            temperature=0.1,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content":
+                    "DATABASE FACTS (JSON): " + json.dumps(snapshot, default=str) +
+                    "\nUSER REQUEST: " + user_text}
+            ],
+            timeout=30
+        )
+        raw = response.choices[0].message.content or "{}"
+        return json.loads(raw), None
+    except Exception as exc:
+        return None, f"OpenAI API error: {exc}"
+
+
+def _ai_answer_with_context(question):
+    client = _get_openai_client()
+    if client is None:
+        return ("I can answer inventory questions when the OpenAI API is connected. "
+                "Please configure OPENAI_API_KEY in Streamlit Secrets.")
+    facts = _ai_database_snapshot()
+    try:
+        response = client.chat.completions.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            temperature=0.3,
             messages=[
                 {"role": "system", "content":
-                 "Convert the user's inventory request into one short canonical command. "
-                 "Do not invent product names or quantities. Return a JSON object with one command field. "
-                 "Supported: show total stock; show today's sales; show today's profit; show sales; "
-                 "show profit; show low stock; show out of stock; show top selling products; show products; "
-                 "show stock of PRODUCT; add QTY units of PRODUCT; remove QTY units of PRODUCT; "
-                 "set PRODUCT stock to QTY; set PRODUCT selling price to PRICE; show purchases. "
-                 "If unclear, return the original request as command."},
-                {"role": "user", "content": command}
+                 "You are the advanced AI assistant for SmartStock AI. Reply in the user's language "
+                 "(Hindi/Hinglish/English). Be helpful and clear. For inventory facts, "
+                 "use ONLY the supplied database snapshot. If data is absent, say so. "
+                 "Never pretend to perform actions. You may answer general knowledge "
+                 "questions, but clearly distinguish general knowledge from store data."},
+                {"role": "user", "content":
+                 "Current store database snapshot:\n" + json.dumps(facts, default=str) +
+                 "\n\nUser asks: " + question}
             ],
-            temperature=0
+            timeout=30
         )
-        data = json.loads(response.choices[0].message.content or "{}")
-        normalized = str(data.get("command", command)).strip()
-        return normalized[:300] if normalized else command
-    except Exception:
-        return command
+        return response.choices[0].message.content or "I couldn't generate a response."
+    except Exception as exc:
+        return f"AI response error: {exc}"
+
+
+def _ai_find_supplier(name):
+    rows = query_df("SELECT * FROM suppliers WHERE lower(name)=lower(?)", (name.strip(),))
+    if rows.empty:
+        rows = query_df("SELECT * FROM suppliers WHERE lower(name) LIKE lower(?)", (f"%{name.strip()}%",))
+    return rows.iloc[0] if len(rows) == 1 else None
+
+
+def _ai_execute_plan(plan):
+    action = str(plan.get("action", "answer")).strip().lower()
+    product_name = str(plan.get("product_name") or "").strip()
+    supplier_name = str(plan.get("supplier_name") or plan.get("supplier") or "").strip()
+    now = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
+    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+
+    def ask_confirmation(label, sql, params):
+        st.session_state["ai_pending_action"] = {
+            "label": label, "sql": sql, "params": params
+        }
+        return f"⚠️ Confirmation required: {label}. Press **Confirm action** below to proceed."
+
+    if action == "answer":
+        return _ai_answer_with_context(str(plan.get("question") or "Please clarify your request."))
+
+    if action in ("list_products", "stock_summary"):
+        df = query_df("SELECT name, sku, stock, selling_price, supplier FROM products ORDER BY name")
+        if df.empty:
+            return "No products are saved in the database yet."
+        if action == "stock_summary":
+            return f"Total stock is {int(df.stock.sum())} units across {len(df)} products."
+        return "📦 Products:\n" + "\n".join(
+            f"• {r['name']} | SKU: {r['sku'] or '-'} | Stock: {int(r['stock'])} | Price: {money(r['selling_price'])}"
+            for _, r in df.iterrows())
+
+    if action == "list_suppliers":
+        df = query_df("SELECT name, phone, email, address FROM suppliers ORDER BY name")
+        return "No suppliers found." if df.empty else "👥 Suppliers:\n" + "\n".join(
+            f"• {r['name']} | {r['phone'] or '-'} | {r['email'] or '-'} | {r['address'] or '-'}"
+            for _, r in df.iterrows())
+
+    if action == "low_stock":
+        df = query_df("SELECT name, stock, reorder_level FROM products WHERE stock<=reorder_level ORDER BY stock")
+        return "✅ No low-stock products." if df.empty else "⚠️ Low stock:\n" + "\n".join(
+            f"• {r['name']}: {int(r['stock'])} (reorder at {int(r['reorder_level'])})" for _, r in df.iterrows())
+
+    if action == "out_of_stock":
+        df = query_df("SELECT name FROM products WHERE stock<=0 ORDER BY name")
+        return "✅ No products are out of stock." if df.empty else "🚨 Out of stock:\n" + "\n".join("• " + n for n in df.name)
+
+    if action in ("sales_summary", "today_sales", "profit_summary", "top_products", "recent_sales"):
+        if action == "today_sales":
+            df = query_df("SELECT COALESCE(SUM(total),0) revenue, COALESCE(SUM(profit),0) profit, COALESCE(SUM(quantity),0) units FROM sales WHERE date(sale_date)=?", (today,))
+            r = df.iloc[0]
+            return f"Today's sales: {money(r.revenue)} | Profit: {money(r.profit)} | Units sold: {int(r.units)}."
+        if action == "profit_summary":
+            df = query_df("SELECT COALESCE(SUM(profit),0) profit FROM sales")
+            return f"Total recorded profit: {money(df.iloc[0].profit)}."
+        if action == "top_products":
+            df = query_df("SELECT product_name, SUM(quantity) units FROM sales GROUP BY product_name ORDER BY units DESC LIMIT 5")
+            return "No sales data yet." if df.empty else "🏆 Top products:\n" + "\n".join(
+                f"• {r.product_name}: {int(r.units)} units" for _, r in df.iterrows())
+        if action == "recent_sales":
+            df = query_df("SELECT product_name, customer, quantity, total, sale_date FROM sales ORDER BY id DESC LIMIT 10")
+            return "No sales found." if df.empty else "🧾 Recent sales:\n" + "\n".join(
+                f"• {r.product_name} × {int(r.quantity)} | {money(r.total)} | {r.sale_date}" for _, r in df.iterrows())
+        df = query_df("SELECT COUNT(*) bills, COALESCE(SUM(total),0) revenue, COALESCE(SUM(profit),0) profit, COALESCE(SUM(quantity),0) units FROM sales")
+        r = df.iloc[0]
+        return f"Sales: {money(r.revenue)} | Profit: {money(r.profit)} | Units: {int(r.units)} | Sale entries: {int(r.bills)}."
+
+    if action in ("purchase_summary", "recent_purchases"):
+        df = query_df("SELECT product_name, supplier, quantity, total, purchase_date FROM purchases ORDER BY id DESC LIMIT 10")
+        return "No purchase records found." if df.empty else "🛒 Recent purchases:\n" + "\n".join(
+            f"• {r.product_name} × {int(r.quantity)} | {r.supplier or '-'} | {money(r.total)} | {r.purchase_date}"
+            for _, r in df.iterrows())
+
+    if action in ("product_details", "add_stock", "remove_stock", "set_stock", "set_price", "delete_product", "add_purchase", "record_sale"):
+        products = query_df("SELECT * FROM products ORDER BY name")
+        row = _find_product(product_name, products) if product_name else None
+        if action == "add_product":
+            row = None
+        elif row is None and action != "add_product":
+            return f"I couldn't uniquely identify '{product_name}'. Please provide the exact product name."
+        if action == "product_details":
+            return (f"{row['name']}: stock {int(row['stock'])}, selling price {money(row['selling_price'])}, "
+                    f"purchase price {money(row['purchase_price'])}, category {row['category'] or '-'}, supplier {row['supplier'] or '-'}.")
+        if action == "delete_product":
+            return ask_confirmation(f"Delete product '{row['name']}'", "DELETE FROM products WHERE id=?", (int(row["id"]),))
+        qty = int(plan.get("quantity") or 0)
+        if action in ("add_stock", "remove_stock", "add_purchase", "record_sale") and qty <= 0:
+            return "Please specify a quantity greater than zero."
+        if action == "add_stock":
+            execute("UPDATE products SET stock=stock+?, updated_at=? WHERE id=?", (qty, now, int(row["id"])))
+            return f"✅ Added {qty} units to {row['name']}. New stock: {int(row['stock'])+qty}."
+        if action == "remove_stock":
+            if qty > int(row["stock"]):
+                return f"Not enough stock. {row['name']} has only {int(row['stock'])} units."
+            execute("UPDATE products SET stock=stock-?, updated_at=? WHERE id=?", (qty, now, int(row["id"])))
+            return f"✅ Removed {qty}. Remaining stock: {int(row['stock'])-qty}."
+        if action == "set_stock":
+            if plan.get("quantity") is None:
+                return "Please tell me the exact stock quantity to set."
+            return ask_confirmation(f"Set {row['name']} stock to {qty}", "UPDATE products SET stock=?, updated_at=? WHERE id=?", (qty, now, int(row["id"])))
+        if action == "set_price":
+            price = plan.get("selling_price")
+            if price is None or float(price) < 0:
+                return "Please provide a valid selling price."
+            conn = db()
+            try:
+                cur = conn.cursor()
+                cur.execute("INSERT INTO price_history(product_id,old_price,new_price,changed_at) VALUES(?,?,?,?)",
+                            (int(row["id"]), float(row["selling_price"]), float(price), now))
+                cur.execute("UPDATE products SET selling_price=?,updated_at=? WHERE id=?", (float(price), now, int(row["id"])))
+                conn.commit()
+            finally:
+                conn.close()
+            return f"✅ {row['name']} price updated to {money(price)}."
+        if action == "add_purchase":
+            cost = float(plan.get("purchase_price") or row["purchase_price"] or 0)
+            total = cost * qty
+            execute("UPDATE products SET stock=stock+?, purchase_price=?, updated_at=? WHERE id=?", (qty, cost, now, int(row["id"])))
+            execute("INSERT INTO purchases(purchase_no,product_id,product_name,supplier,quantity,unit_cost,total,purchase_date,status) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (f"AI-{datetime.now().strftime('%Y%m%d%H%M%S')}", int(row["id"]), row["name"], supplier_name or row["supplier"], qty, cost, total, now, "Completed"))
+            return f"✅ Purchase saved: {qty} × {row['name']}; stock is now {int(row['stock'])+qty}. Purchase total {money(total)}."
+        if action == "record_sale":
+            if qty > int(row["stock"]):
+                return f"Not enough stock. Available: {int(row['stock'])}."
+            price = float(plan.get("selling_price") or row["selling_price"])
+            total = price * qty
+            profit = (price - float(row["purchase_price"] or 0)) * qty
+            execute("UPDATE products SET stock=stock-?, updated_at=? WHERE id=?", (qty, now, int(row["id"])))
+            execute("INSERT INTO sales(invoice_no,product_id,product_name,customer,quantity,unit_price,unit_cost,total,profit,sale_date) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (f"AI-{datetime.now().strftime('%Y%m%d%H%M%S')}", int(row["id"]), row["name"], plan.get("customer") or "Walk-in", qty, price, float(row["purchase_price"] or 0), total, profit, now))
+            return f"✅ Sale recorded: {qty} × {row['name']} for {money(total)}. Remaining stock: {int(row['stock'])-qty}."
+        return "I couldn't complete that product action."
+
+    if action == "add_product":
+        name = product_name
+        if not name:
+            return "Please provide the product name."
+        sku = str(plan.get("sku") or "").strip() or None
+        try:
+            execute("""INSERT INTO products(sku,name,brand,category,purchase_price,selling_price,stock,reorder_level,supplier,created_at,updated_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    (sku, name, plan.get("brand"), plan.get("category"),
+                     float(plan.get("purchase_price") or 0), float(plan.get("selling_price") or 0),
+                     int(plan.get("quantity") or 0), int(plan.get("reorder_level") or 5),
+                     supplier_name or None, now, now))
+            return f"✅ Product '{name}' added to inventory."
+        except sqlite3.IntegrityError:
+            return "A product with that SKU/name already exists. Check the inventory first."
+
+    if action in ("add_supplier", "update_supplier", "delete_supplier", "supplier_details"):
+        if not supplier_name:
+            return "Please tell me the supplier's exact name."
+        row = _ai_find_supplier(supplier_name)
+        if action == "supplier_details":
+            return "Supplier not found or name is ambiguous." if row is None else (
+                f"{row['name']} | Phone: {row['phone'] or '-'} | Email: {row['email'] or '-'} | Address: {row['address'] or '-'}.")
+        if action == "add_supplier":
+            try:
+                execute("INSERT INTO suppliers(name,phone,email,address) VALUES(?,?,?,?)",
+                        (supplier_name, plan.get("phone"), plan.get("email"), plan.get("address")))
+                return f"✅ Supplier '{supplier_name}' added successfully."
+            except sqlite3.IntegrityError:
+                return "This supplier already exists. Ask me to update its details instead."
+        if row is None:
+            return "Supplier not found or name is ambiguous."
+        if action == "delete_supplier":
+            return ask_confirmation(f"Delete supplier '{row['name']}'", "DELETE FROM suppliers WHERE id=?", (int(row["id"]),))
+        fields = []
+        values = []
+        for field, key in (("phone","new_phone"),("email","new_email"),("address","new_address")):
+            if plan.get(key) is not None:
+                fields.append(field + "=?")
+                values.append(plan[key])
+        if not fields:
+            return "Tell me which supplier detail to update (phone, email or address)."
+        values.append(int(row["id"]))
+        execute("UPDATE suppliers SET " + ", ".join(fields) + " WHERE id=?", tuple(values))
+        return f"✅ Supplier '{row['name']}' details updated."
+
+    return "I understood the request, but need one more detail. Please rephrase it or tell me the exact product/supplier name."
 
 
 def process_ai(command):
     original = str(command or "").strip()
     if not original:
-        return "Please enter a command."
-    command = _ai_api_normalize(original).lower().strip()
-    today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
-    products = query_df("SELECT * FROM products ORDER BY name")
-
-    if any(x in command for x in ["total stock", "stock in shop", "overall stock", "stock quantity"]):
-        total = int(products["stock"].sum()) if not products.empty else 0
-        return f"📦 Current total stock: {total:,} units across {len(products)} products."
-
-    if any(x in command for x in ["today's sales", "todays sales", "sales today", "today sale", "today revenue"]):
-        data = query_df("SELECT COALESCE(SUM(total),0) AS amount, COALESCE(SUM(quantity),0) AS units FROM sales WHERE date(sale_date)=?", (today,))
-        return f"💰 Today's sales: {money(data.iloc[0]['amount'])} | Units sold: {int(data.iloc[0]['units'])}."
-
-    if any(x in command for x in ["today's profit", "todays profit", "profit today"]):
-        data = query_df("SELECT COALESCE(SUM(profit),0) AS amount FROM sales WHERE date(sale_date)=?", (today,))
-        return f"📈 Today's profit: {money(data.iloc[0]['amount'])}."
-
-    if "profit" in command:
-        data = query_df("SELECT COALESCE(SUM(profit),0) AS amount FROM sales")
-        return f"📈 Total recorded profit: {money(data.iloc[0]['amount'])}."
-
-    if any(x in command for x in ["sales", "revenue", "turnover"]):
-        data = query_df("SELECT COALESCE(SUM(total),0) AS amount, COALESCE(SUM(quantity),0) AS units FROM sales")
-        return f"💰 Total recorded sales: {money(data.iloc[0]['amount'])} | Units sold: {int(data.iloc[0]['units'])}."
-
-    if any(x in command for x in ["low stock", "running low", "reorder"]):
-        low = products[products["stock"] <= products["reorder_level"]] if not products.empty else products
-        if low.empty:
-            return "✅ No low-stock products."
-        return "⚠️ Low-stock products:\n\n" + "\n".join(
-            f"• {r['name']} — {int(r['stock'])} units (reorder at {int(r['reorder_level'])})"
-            for _, r in low.iterrows())
-
-    if any(x in command for x in ["out of stock", "stock finished", "zero stock"]):
-        out = products[products["stock"] <= 0] if not products.empty else products
-        return "✅ No products are out of stock." if out.empty else "🚨 Out-of-stock products:\n\n" + "\n".join("• " + n for n in out["name"].tolist())
-
-    if any(x in command for x in ["top selling", "best selling", "most sold", "popular products"]):
-        data = query_df("SELECT product_name, SUM(quantity) AS units FROM sales GROUP BY product_name ORDER BY units DESC LIMIT 5")
-        return "No sales data available yet." if data.empty else "🏆 Top-selling products:\n\n" + "\n".join(
-            f"• {r['product_name']} — {int(r['units'])} units" for _, r in data.iterrows())
-
-    if "purchase" in command:
-        data = query_df("SELECT product_name, supplier, quantity, total FROM purchases ORDER BY id DESC LIMIT 10")
-        return "No purchase records found." if data.empty else "🛒 Recent purchases:\n\n" + "\n".join(
-            f"• {r['product_name']} — {int(r['quantity'])} units from {r['supplier']} ({money(r['total'])})"
-            for _, r in data.iterrows())
-
-    if any(x in command for x in ["show products", "list products", "all products", "product list"]):
-        return "No products have been added yet." if products.empty else "📋 Products and current stock:\n\n" + "\n".join(
-            f"• {r['name']} — {int(r['stock'])} units" for _, r in products.iterrows())
-
-    stock_match = re.search(r"(?:show|check|what is|how many|find)\s+(?:the\s+)?(?:stock|quantity)\s+(?:of\s+)?(.+)$", command)
-    if stock_match:
-        row = _find_product(stock_match.group(1), products)
-        return f"📦 {row['name']} currently has {int(row['stock'])} units." if row is not None else "Product not found or name is ambiguous. Enter the full product name."
-
-    add_match = re.search(r"(?:add|increase|restock)\s+(\d+)\s+(?:(?:pieces?|units?|items?|qty)\s+)?(?:of\s+)?(.+)$", command)
-    if add_match:
-        qty, text = int(add_match.group(1)), add_match.group(2)
-        row = _find_product(text, products)
-        if row is None:
-            return "Product not found or name is ambiguous. Please use the exact product name."
-        execute("UPDATE products SET stock=stock+?, updated_at=? WHERE id=?", (qty, datetime.now().isoformat(), int(row["id"])))
-        return f"✅ Added {qty} units to {row['name']}. New stock: {int(row['stock']) + qty}."
-
-    remove_match = re.search(r"(?:remove|decrease|subtract|deduct)\s+(\d+)\s+(?:(?:pieces?|units?|items?|qty)\s+)?(?:of\s+)?(.+)$", command)
-    if remove_match:
-        qty, text = int(remove_match.group(1)), remove_match.group(2)
-        row = _find_product(text, products)
-        if row is None:
-            return "Product not found or name is ambiguous. Please use the exact product name."
-        if qty > int(row["stock"]):
-            return f"❌ Cannot remove {qty}; only {int(row['stock'])} units of {row['name']} are available."
-        execute("UPDATE products SET stock=stock-?, updated_at=? WHERE id=?", (qty, datetime.now().isoformat(), int(row["id"])))
-        return f"✅ Removed {qty} units from {row['name']}. New stock: {int(row['stock']) - qty}."
-
-    price_match = re.search(r"(?:set|update|change)\s+(.+?)\s+(?:selling\s+)?price\s+(?:to|as)\s+(\d+(?:\.\d+)?)", command)
-    if price_match:
-        row = _find_product(price_match.group(1), products)
-        if row is None:
-            return "Product not found or name is ambiguous. Please use the exact product name."
-        new_price = float(price_match.group(2))
-        conn = db()
-        try:
-            cur = conn.cursor()
-            cur.execute("INSERT INTO price_history(product_id, old_price, new_price, changed_at) VALUES(?,?,?,?)",
-                        (int(row["id"]), float(row["selling_price"]), new_price, datetime.now().isoformat()))
-            cur.execute("UPDATE products SET selling_price=?, updated_at=? WHERE id=?",
-                        (new_price, datetime.now().isoformat(), int(row["id"])))
-            conn.commit()
-        finally:
-            conn.close()
-        return f"✅ {row['name']} selling price updated from {money(row['selling_price'])} to {money(new_price)}."
-
-    set_match = re.search(r"(?:set|update|change)\s+(?:the\s+)?(.+?)\s+(?:stock\s+)?(?:to|as)\s+(\d+)\s*(?:units?|pieces?)?", command)
-    if set_match:
-        row = _find_product(set_match.group(1), products)
-        if row is None:
-            return "Product not found or name is ambiguous. Please use the exact product name."
-        qty = int(set_match.group(2))
-        execute("UPDATE products SET stock=?, updated_at=? WHERE id=?", (qty, datetime.now().isoformat(), int(row["id"])))
-        return f"✅ {row['name']} stock set to {qty} units."
-
-    return ("🤖 I couldn't understand that command. Try:\n\n"
-            "• Show total stock\n• Show today's sales\n• Show today's profit\n"
-            "• Show sales / Show profit\n• Show low stock / Show out of stock\n"
-            "• Show top selling products\n• Show products\n"
-            "• Show stock of OnePlus Buds\n• Add 20 pieces of OnePlus Buds\n"
-            "• Remove 2 units of OnePlus Buds\n• Set OnePlus Buds stock to 25\n"
-            "• Set OnePlus Buds selling price to 4299")
+        return "Please ask me something."
+    plan, error = _ai_make_plan(original)
+    if error:
+        return error
+    if not isinstance(plan, dict):
+        return "I couldn't understand that. Please try again in simple words."
+    return _ai_execute_plan(plan)
 
 
 def ai_page():
     st.markdown("# 🤖 SmartStock AI Assistant")
-    st.caption("Ask about stock, sales, profit, purchases, or update product information.")
-    try:
-        api_enabled = bool(st.secrets.get("OPENAI_API_KEY"))
-    except Exception:
-        api_enabled = bool(os.getenv("OPENAI_API_KEY"))
-    if api_enabled and OpenAI is not None:
-        st.success("🟢 AI Assistant Online — OpenAI API enabled")
+    st.caption("Your intelligent inventory and sales assistant. Talk naturally in Hindi, Hinglish or English.")
+    client = _get_openai_client()
+    if client:
+        st.success("🟢 AI Assistant online — OpenAI API connected")
     else:
-        st.success("🟢 AI Assistant Online — Built-in command mode")
-        st.caption("Optional: add OPENAI_API_KEY in Streamlit Secrets for natural-language command understanding.")
+        st.warning("API not connected. Add OPENAI_API_KEY in Streamlit Secrets to enable advanced AI.")
 
-    st.markdown("### Example Commands")
-    examples = [
-        "Show total stock", "Show today's sales", "Show today's profit",
-        "Show sales", "Show profit", "Show low stock", "Show out of stock",
-        "Show top selling products", "Show products", "Show stock of OnePlus Buds",
-        "Add 20 pieces of OnePlus Buds", "Remove 2 units of OnePlus Buds",
-        "Set OnePlus Buds stock to 25", "Set OnePlus Buds selling price to 4299",
-        "Show recent purchases"
-    ]
-    for example in examples:
-        st.code(example, language="text")
+    with st.expander("What can I ask the AI Assistant?"):
+        st.markdown("""
+        - "Aaj kitni sale hui aur kitna profit hua?"
+        - "Mere low-stock products batao."
+        - "Add 30 units of Maggi."
+        - "Naya product add karo: Amul Butter, category Dairy, price 60, stock 20."
+        - "Ravi Traders naam ka supplier add karo, phone 9876543210."
+        - "Supplier Tech Zone ka phone update karo."
+        - "OnePlus Buds ka stock 10 kar do."
+        - "5 Samsung S24 sell karo."
+        - "Recent purchases dikhao."
+        - "Which products are most profitable?"
+        """)
 
-    command = st.text_input("Enter your command",
-                            value=st.session_state.pop("dashboard_ai_command", ""),
-                            key="ai_command_input")
-    if st.button("🚀 Run Command", type="primary"):
-        if command.strip():
-            result = process_ai(command)
-            st.session_state["last_ai_result"] = result
-            st.info(result)
-        else:
-            st.warning("Please enter a command.")
-    elif st.session_state.get("last_ai_result"):
-        st.info(st.session_state["last_ai_result"])
+    if "ai_chat_history" not in st.session_state:
+        st.session_state["ai_chat_history"] = []
+    for item in st.session_state["ai_chat_history"][-12:]:
+        with st.chat_message(item["role"]):
+            st.markdown(item["content"])
+
+    prompt = st.chat_input("Ask anything about your store...")
+    if prompt:
+        st.session_state["ai_chat_history"].append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        result = process_ai(prompt)
+        st.session_state["ai_chat_history"].append({"role": "assistant", "content": result})
+        with st.chat_message("assistant"):
+            st.markdown(result)
+
+    pending = st.session_state.get("ai_pending_action")
+    if pending:
+        st.warning(pending["label"] + " — this action changes your database.")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✅ Confirm action", type="primary", key="ai_confirm_action"):
+                execute(pending["sql"], tuple(pending["params"]))
+                st.session_state.pop("ai_pending_action", None)
+                st.success("Action completed successfully.")
+                st.rerun()
+        with c2:
+            if st.button("Cancel", key="ai_cancel_action"):
+                st.session_state.pop("ai_pending_action", None)
+                st.info("Action cancelled.")
+                st.rerun()
 
 
 # =========================================================
