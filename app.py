@@ -3,13 +3,23 @@ import sqlite3
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date as _date
+import calendar
+import io
+import zipfile
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 from pathlib import Path
 import re
 import os
 import json
 import shutil
+
+try:
+    import psycopg2
+    import psycopg2.pool
+except ImportError:
+    psycopg2 = None
 
 try:
     from google import genai
@@ -38,10 +48,143 @@ if LEGACY_DB_FILE != DB_FILE.resolve() and LEGACY_DB_FILE.exists() and not DB_FI
     shutil.copy2(LEGACY_DB_FILE, DB_FILE)
 
 
+# CLOUD DATABASE (optional) ==========================
+# Add DATABASE_URL to Streamlit Secrets (or environment) to store ALL data in a
+# permanent PostgreSQL database such as Supabase. Without it, the local
+# SQLite file is used exactly as before.
+
+def _read_database_url():
+    url = None
+    try:
+        url = st.secrets.get("DATABASE_URL")
+    except Exception:
+        url = None
+    return str(url or os.getenv("DATABASE_URL") or "").strip()
+
+
+DATABASE_URL = _read_database_url()
+USE_PG = bool(DATABASE_URL)
+
+if USE_PG and psycopg2 is None:
+    st.error("DATABASE_URL is set, but 'psycopg2-binary' is not installed. "
+             "Add psycopg2-binary to requirements.txt and reboot the app.")
+    st.stop()
+
+DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError,) + (
+    (psycopg2.IntegrityError,) if psycopg2 else ()
+)
+
+
 # DATABASE HELPERS==========================
 
 
+def _pg_translate(sql, has_params):
+    """Convert the app's SQLite-style SQL into PostgreSQL."""
+    s = sql.strip().rstrip(";")
+    if "CREATE TABLE" in s.upper():
+        s = s.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+        s = s.replace("DEFAULT CURRENT_TIMESTAMP", "DEFAULT (CURRENT_TIMESTAMP::text)")
+        s = re.sub(r"\bREAL\b", "DOUBLE PRECISION", s)
+    if re.match(r"INSERT\s+OR\s+REPLACE\s+INTO\s+app_meta", s, re.I):
+        s = re.sub(r"INSERT\s+OR\s+REPLACE\s+INTO", "INSERT INTO", s, count=1, flags=re.I)
+        s += " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+    elif re.match(r"INSERT\s+OR\s+IGNORE\s+INTO", s, re.I):
+        s = re.sub(r"INSERT\s+OR\s+IGNORE\s+INTO", "INSERT INTO", s, count=1, flags=re.I)
+        s += " ON CONFLICT DO NOTHING"
+    if has_params:
+        s = s.replace("%", "%%")
+    return s.replace("?", "%s")
+
+
+def _clean_params(params):
+    # numpy / pandas scalars -> plain Python values
+    return tuple(p.item() if hasattr(p, "item") else p for p in (params or ()))
+
+
+class PGCursor:
+    def __init__(self, cur):
+        self._cur = cur
+        self.lastrowid = None
+
+    def execute(self, sql, params=()):
+        params = _clean_params(params)
+        self._cur.execute(_pg_translate(sql, bool(params)), params or None)
+        return self
+
+    def executescript(self, script):
+        self._cur.execute(_pg_translate(script, False))
+        return self
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    @property
+    def description(self):
+        return self._cur.description
+
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
+
+class PGConn:
+    """Small wrapper so the rest of the app can keep using sqlite-style calls."""
+
+    def __init__(self, raw, pool):
+        self._raw = raw
+        self._pool = pool
+        self._closed = False
+
+    def cursor(self):
+        return PGCursor(self._raw.cursor())
+
+    def execute(self, sql, params=()):
+        return self.cursor().execute(sql, params)
+
+    def commit(self):
+        self._raw.commit()
+
+    def rollback(self):
+        self._raw.rollback()
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._raw.rollback()
+            self._pool.putconn(self._raw)
+        except Exception:
+            try:
+                self._pool.putconn(self._raw, close=True)
+            except Exception:
+                pass
+
+
+@st.cache_resource(show_spinner=False)
+def _pg_pool():
+    return psycopg2.pool.ThreadedConnectionPool(
+        1, 5, dsn=DATABASE_URL, connect_timeout=15
+    )
+
+
 def db():
+    if USE_PG:
+        pool = _pg_pool()
+        raw = pool.getconn()
+        try:
+            test = raw.cursor()
+            test.execute("SELECT 1")
+            test.close()
+            raw.rollback()
+        except Exception:
+            pool.putconn(raw, close=True)
+            raw = pool.getconn()
+        return PGConn(raw, pool)
+
     conn = sqlite3.connect(
         DB_FILE,
         check_same_thread=False
@@ -53,9 +196,30 @@ def db():
 def query_df(sql, params=()):
     conn = db()
     try:
+        if USE_PG:
+            cur = conn.cursor()
+            cur.execute(sql, params)
+            df = pd.DataFrame(
+                cur.fetchall(),
+                columns=[d[0] for d in cur.description]
+            )
+            for c in df.columns:
+                if df[c].dtype == object and len(df) and isinstance(df[c].iloc[0], Decimal):
+                    df[c] = df[c].astype(float)
+            return df
         return pd.read_sql_query(sql, conn, params=params)
     finally:
         conn.close()
+
+
+def export_zip():
+    """All tables as CSV files inside one ZIP (for downloading a copy of the data)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for t in ("products", "sales", "purchases",
+                  "suppliers", "customers", "price_history"):
+            z.writestr(f"{t}.csv", query_df(f"SELECT * FROM {t}").to_csv(index=False))
+    return buf.getvalue()
 
 
 def execute(sql, params=()):
@@ -71,6 +235,77 @@ def execute(sql, params=()):
 
 def money(value):
     return f"₹{float(value or 0):,.2f}"
+
+
+# =========================================================
+# DATE / PERIOD / MESSAGE HELPERS (India time)
+# =========================================================
+
+def today_ist():
+    return datetime.now(ZoneInfo("Asia/Kolkata")).date()
+
+
+def months_back(d, n):
+    """The same day n months earlier (clipped to month end)."""
+    total = d.year * 12 + (d.month - 1) - n
+    y, m = divmod(total, 12)
+    m += 1
+    return _date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+def to_date_series(series):
+    """Works for 'YYYY-MM-DD' and full timestamps; keeps only the date part."""
+    return pd.to_datetime(series.astype(str).str[:10], errors="coerce")
+
+
+def flash(message, kind="success"):
+    """Show a message after st.rerun() (st.success would vanish on rerun)."""
+    st.session_state["_flash"] = (kind, message)
+
+
+def show_flash():
+    item = st.session_state.pop("_flash", None)
+    if item:
+        getattr(st, item[0])(item[1])
+
+
+PERIOD_OPTIONS = [
+    "Today", "Last 7 days", "Last 1 month", "Last 2 months",
+    "Last 3 months", "This month", "All time", "Custom range"
+]
+
+
+def period_selector(key, min_date, max_date=None, default="Last 1 month"):
+    """Quick period picker. Returns (start_date, end_date) or None."""
+    today = today_ist()
+    choice = st.selectbox(
+        "📅 Period",
+        PERIOD_OPTIONS,
+        index=PERIOD_OPTIONS.index(default),
+        key=f"{key}_period"
+    )
+    if choice == "Today":
+        return today, today
+    if choice == "Last 7 days":
+        return today - timedelta(days=6), today
+    if choice == "Last 1 month":
+        return months_back(today, 1) + timedelta(days=1), today
+    if choice == "Last 2 months":
+        return months_back(today, 2) + timedelta(days=1), today
+    if choice == "Last 3 months":
+        return months_back(today, 3) + timedelta(days=1), today
+    if choice == "This month":
+        return today.replace(day=1), today
+    if choice == "All time":
+        return min(min_date, today), max(max_date or today, today)
+    value = st.date_input(
+        "Select start and end date",
+        value=(min(max(min_date, today - timedelta(days=29)), today), today),
+        key=f"{key}_custom"
+    )
+    if isinstance(value, tuple) and len(value) == 2:
+        return value
+    return None
 
 
 # DATABASE INITIALIZATION
@@ -147,258 +382,60 @@ def initialize_database():
         );
     """)
 
-    count = cur.execute(
-        "SELECT COUNT(*) FROM products"
-    ).fetchone()[0]
+    # One-time cleanup of the old built-in demo data.
+    # Runs only once per database (flag stored in app_meta); after that every
+    # entry you add from the UI is kept permanently.
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY, value TEXT)"
+    )
+    flag = cur.execute(
+        "SELECT value FROM app_meta WHERE key='demo_data_cleared'"
+    ).fetchone()
 
-    if count == 0:
-
-        products = [
-            ("SKU001", "iPhone 15", "Apple",
-             "Mobile Phones", 52000, 57000, 32, 8,
-             "Mobile World"),
-
-            ("SKU002", "OnePlus 12", "OnePlus",
-             "Mobile Phones", 39000, 45000, 27, 7,
-             "Tech Zone"),
-
-            ("SKU003", "Samsung S24", "Samsung",
-             "Mobile Phones", 47000, 55000, 24, 7,
-             "Tech Zone"),
-
-            ("SKU004", "Boat Airdopes 131", "Boat",
-             "Earbuds & Audio", 1200, 2450, 44, 10,
-             "Audio World"),
-
-            ("SKU005", "Samsung Galaxy Buds 2", "Samsung",
-             "Earbuds & Audio", 6500, 7999, 13, 5,
-             "Audio World"),
-
-            ("SKU006", "OnePlus Buds", "OnePlus",
-             "Earbuds & Audio", 3000, 3999, 8, 5,
-             "Audio World"),
-
-            ("SKU007", "LG 55 4K TV", "LG",
-             "Television", 46000, 52000, 14, 5,
-             "Home Appliances"),
-
-            ("SKU008", "Sony Bravia 55", "Sony",
-             "Television", 52000, 61000, 9, 4,
-             "Home Appliances"),
-
-            ("SKU009", "HP Pavilion 15", "HP",
-             "Laptops", 56000, 65000, 11, 5,
-             "NextGen Distributors"),
-
-            ("SKU010", "Dell Inspiron 14", "Dell",
-             "Laptops", 51000, 59000, 4, 5,
-             "NextGen Distributors"),
-
-            ("SKU011", "Samsung Washing Machine", "Samsung",
-             "Washing Machines", 36000, 42500, 3, 5,
-             "Home Appliances"),
-
-            ("SKU012", "LG Refrigerator", "LG",
-             "Refrigerators", 42000, 49000, 7, 5,
-             "Home Appliances")
-        ]
-
-        cur.executemany("""
-            INSERT INTO products(
-                sku, name, brand, category,
-                purchase_price, selling_price,
-                stock, reorder_level, supplier
-            )
-            VALUES(?,?,?,?,?,?,?,?,?)
-        """, products)
-
-        suppliers = [
-            ("Mobile World", "9876500011",
-             "mobile@example.com", "Dehradun"),
-
-            ("Tech Zone", "9876500012",
-             "tech@example.com", "Delhi"),
-
-            ("Audio World", "9876500013",
-             "audio@example.com", "Haridwar"),
-
-            ("Home Appliances", "9876500014",
-             "home@example.com", "Dehradun"),
-
-            ("NextGen Distributors", "9876500015",
-             "nextgen@example.com", "Noida")
-        ]
-
-        cur.executemany("""
-            INSERT OR IGNORE INTO suppliers(
-                name, phone, email, address
-            )
-            VALUES(?,?,?,?)
-        """, suppliers)
-
-        conn.commit()
-
-        product_map = {
-            row["name"]: row["id"]
-            for row in cur.execute(
-                "SELECT id, name FROM products"
-            ).fetchall()
-        }
-
-        sales_pattern = [
-            ("iPhone 15", 1, 57000, 52000),
-            ("OnePlus 12", 2, 45000, 39000),
-            ("Samsung S24", 1, 55000, 47000),
-            ("Boat Airdopes 131", 5, 2450, 1200),
-            ("Samsung Galaxy Buds 2", 2, 7999, 6500),
-            ("OnePlus Buds", 3, 3999, 3000),
-            ("LG 55 4K TV", 1, 52000, 46000),
-            ("Sony Bravia 55", 1, 61000, 52000),
-            ("HP Pavilion 15", 1, 65000, 56000),
-            ("Dell Inspiron 14", 2, 59000, 51000)
-        ]
-
-        customers = [
-            "MAYANK", "PAWANI", "ANSHUMAN", "ADVAIT",
-            "LUCKY", "Riya", "Mohit", "Pooja"
-        ]
-
-        today = datetime.now().date()
-        invoice_counter = 100
-
-        for day_offset in range(29, -1, -1):
-
-            sale_day = today - timedelta(days=day_offset)
-            number_of_sales = 1 + (day_offset % 3)
-
-            for n in range(number_of_sales):
-
-                item = sales_pattern[
-                    (day_offset + n) % len(sales_pattern)
-                ]
-
-                product_name, qty, price, cost = item
-
-                if day_offset % 7 == 0:
-                    qty += 1
-
-                invoice_counter += 1
-
-                cur.execute("""
-                    INSERT INTO sales(
-                        invoice_no, product_id, product_name,
-                        customer, quantity, unit_price,
-                        unit_cost, total, profit, sale_date
-                    )
-                    VALUES(?,?,?,?,?,?,?,?,?,?)
-                """, (
-                    f"SO-{invoice_counter}",
-                    product_map[product_name],
-                    product_name,
-                    customers[(day_offset + n) % len(customers)],
-                    qty,
-                    price,
-                    cost,
-                    qty * price,
-                    qty * (price - cost),
-                    sale_day.isoformat()
-                ))
-
-        purchase_data = [
-            ("iPhone 15", "Mobile World", 10, 52000),
-            ("OnePlus 12", "Tech Zone", 15, 39000),
-            ("Boat Airdopes 131", "Audio World", 30, 1200),
-            ("LG 55 4K TV", "Home Appliances", 8, 46000),
-            ("HP Pavilion 15", "NextGen Distributors", 6, 56000)
-        ]
-
-        for i, item in enumerate(purchase_data):
-
-            product_name, supplier, qty, cost = item
-
-            cur.execute("""
-                INSERT INTO purchases(
-                    purchase_no, product_id, product_name,
-                    supplier, quantity, unit_cost, total,
-                    purchase_date, status
+    if flag is None:
+        tables = ("products", "sales", "purchases",
+                  "suppliers", "customers", "price_history")
+        has_rows = any(
+            cur.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            for t in tables
+        )
+        if has_rows:
+            conn.commit()
+            try:
+                shutil.copy2(
+                    DB_FILE,
+                    DB_FILE.with_name("smartstock_backup_before_clear.db")
                 )
-                VALUES(?,?,?,?,?,?,?,?,?)
-            """, (
-                f"PO-{500+i}",
-                product_map[product_name],
-                product_name,
-                supplier,
-                qty,
-                cost,
-                qty * cost,
-                (today - timedelta(days=i+1)).isoformat(),
-                "Completed"
-            ))
+            except Exception:
+                pass
+            for t in tables:
+                cur.execute(f"DELETE FROM {t}")
+            if not USE_PG:
+                try:
+                    cur.execute("DELETE FROM sqlite_sequence")
+                except sqlite3.OperationalError:
+                    pass
+        cur.execute(
+            "INSERT OR REPLACE INTO app_meta(key, value) VALUES('demo_data_cleared', ?)",
+            (datetime.now().isoformat(),)
+        )
 
     conn.commit()
     conn.close()
 
 
-# =========================================================
-# REFRESH DEMO DATES TO CURRENT DATE
-# =========================================================
-
-def refresh_demo_dates():
-    """
-    Refresh dates only for the predefined demo invoices
-    and demo purchase numbers.
-    """
-
-    today = datetime.now().date()
-    conn = db()
-    cur = conn.cursor()
-
-    try:
-        invoice_counter = 100
-
-        for day_offset in range(29, -1, -1):
-
-            sale_day = today - timedelta(days=day_offset)
-            number_of_sales = 1 + (day_offset % 3)
-
-            for _ in range(number_of_sales):
-
-                invoice_counter += 1
-
-                cur.execute("""
-                    UPDATE sales
-                    SET sale_date=?
-                    WHERE invoice_no=?
-                """, (
-                    sale_day.isoformat(),
-                    f"SO-{invoice_counter}"
-                ))
-
-        for i in range(5):
-
-            purchase_day = today - timedelta(days=i+1)
-
-            cur.execute("""
-                UPDATE purchases
-                SET purchase_date=?
-                WHERE purchase_no=?
-            """, (
-                purchase_day.isoformat(),
-                f"PO-{500+i}"
-            ))
-
-        conn.commit()
-
-    except Exception:
-        conn.rollback()
-        raise
-
-    finally:
-        conn.close()
+@st.cache_resource(show_spinner=False)
+def _initialize_once():
+    initialize_database()
+    return True
 
 
-initialize_database()
-refresh_demo_dates()
+if USE_PG:
+    _initialize_once()   # cloud DB: create tables once per app start
+else:
+    initialize_database()
+
+
 
 
 # CSS DESIGN — SMARTSTOCK AI DARK NAVY DASHBOARD
@@ -638,19 +675,17 @@ def dashboard():
         total_revenue = total_profit = 0
         filtered = sales.copy()
     else:
-        sales["sale_date"] = pd.to_datetime(sales["sale_date"], errors="coerce")
+        sales["sale_date"] = to_date_series(sales["sale_date"])
         valid_dates = sales["sale_date"].dropna()
-        today = datetime.now().date()
-        default_start = max(valid_dates.min().date(), today - timedelta(days=6)) if not valid_dates.empty else today
-        date_range = st.date_input(
-            "📅 Visualization Date Range",
-            value=(default_start, today),
-            key="dashboard_date_range"
+        picked = period_selector(
+            "dashboard",
+            valid_dates.min().date() if not valid_dates.empty else today_ist(),
+            valid_dates.max().date() if not valid_dates.empty else today_ist()
         )
-        if not isinstance(date_range, tuple) or len(date_range) != 2:
+        if picked is None:
             st.info("Select a start date and an end date.")
             return
-        start_date, end_date = date_range
+        start_date, end_date = picked
         filtered = sales[
             sales["sale_date"].dt.date.between(start_date, end_date)
         ].copy()
@@ -811,7 +846,7 @@ def dashboard():
         with bottom_left:
             st.markdown("### 🧾 Recent Sales")
             if not filtered.empty:
-                recent = filtered.sort_values("sale_date", ascending=False).head(6)
+                recent = filtered.sort_values(["sale_date", "id"], ascending=False).head(6)
                 cols = ["invoice_no", "product_name", "customer", "total", "sale_date"]
                 recent = recent[[c for c in cols if c in recent.columns]].copy()
                 if "total" in recent.columns:
@@ -867,9 +902,9 @@ def dashboard():
         st.markdown("#### Try a command")
         for suggestion in [
             "Show today's sales",
-            "Which product is low in stock?",
-            "Show profit",
-            "Show top selling products"
+            "Show 1 month sales and profit",
+            "Show 2 months sales and profit",
+            "Which product is low in stock?"
         ]:
             if st.button(suggestion, key="dash_ai_" + suggestion, use_container_width=True):
                 st.session_state["dashboard_ai_result"] = process_ai(suggestion)
@@ -907,6 +942,9 @@ def inventory_page():
 
     with tab1:
 
+        if current.empty:
+            st.info("Inventory is empty. Use the 'Add Product' tab to add your first product.")
+
         search = st.text_input("🔎 Search Product")
 
         display = current.copy()
@@ -941,7 +979,7 @@ def inventory_page():
                     (delete_name,)
                 )
 
-                st.success("Product deleted.")
+                flash("Product deleted.")
                 st.rerun()
 
     with tab2:
@@ -1020,10 +1058,16 @@ def inventory_page():
                         supplier
                     ))
 
-                    st.success("Product added successfully.")
+                    if supplier.strip():
+                        execute(
+                            "INSERT OR IGNORE INTO suppliers(name) VALUES(?)",
+                            (supplier.strip(),)
+                        )
+
+                    flash("Product added successfully.")
                     st.rerun()
 
-                except sqlite3.IntegrityError:
+                except DB_INTEGRITY_ERRORS:
                     st.error("This SKU already exists.")
 
     with tab3:
@@ -1131,7 +1175,7 @@ def inventory_page():
                     row["id"]
                 ))
 
-                st.success("Product updated.")
+                flash("Product updated.")
                 st.rerun()
 
 
@@ -1185,6 +1229,12 @@ def sales_page():
                     value=1
                 )
 
+                sale_date = st.date_input(
+                    "Sale Date",
+                    value=today_ist(),
+                    max_value=today_ist()
+                )
+
                 submit = st.form_submit_button("✅ Complete Sale")
 
             if submit:
@@ -1230,7 +1280,7 @@ def sales_page():
                             product["purchase_price"],
                             total,
                             profit,
-                            datetime.now().date().isoformat()
+                            sale_date.isoformat()
                         ))
 
                         cur.execute("""
@@ -1260,7 +1310,7 @@ def sales_page():
 
                         conn.commit()
 
-                        st.success(f"Sale completed: {invoice}")
+                        flash(f"Sale completed: {invoice}")
                         st.rerun()
 
                     except Exception as e:
@@ -1358,6 +1408,12 @@ def purchases_page():
                     step=100.0
                 )
 
+                purchase_date = st.date_input(
+                    "Purchase Date",
+                    value=today_ist(),
+                    max_value=today_ist()
+                )
+
                 submit = st.form_submit_button("📥 Complete Purchase")
 
             if submit:
@@ -1390,7 +1446,7 @@ def purchases_page():
                         quantity,
                         unit_cost,
                         total,
-                        datetime.now().date().isoformat(),
+                        purchase_date.isoformat(),
                         "Completed"
                     ))
 
@@ -1411,7 +1467,7 @@ def purchases_page():
 
                     conn.commit()
 
-                    st.success("Purchase completed.")
+                    flash("Purchase completed.")
                     st.rerun()
 
                 except Exception as e:
@@ -1488,10 +1544,10 @@ def suppliers_page():
                         address
                     ))
 
-                    st.success("Supplier added.")
+                    flash("Supplier added.")
                     st.rerun()
 
-                except sqlite3.IntegrityError:
+                except DB_INTEGRITY_ERRORS:
                     st.error("Supplier already exists.")
 
 
@@ -1510,22 +1566,28 @@ def reports_page():
         st.info("No sales data available.")
         return
 
-    data["sale_date"] = pd.to_datetime(data["sale_date"])
+    data["sale_date"] = to_date_series(data["sale_date"])
 
-    min_date = data["sale_date"].min().date()
-    max_date = data["sale_date"].max().date()
+    valid = data["sale_date"].dropna()
 
-    date_range = st.date_input(
-        "Select Report Period",
-        value=(min_date, max_date)
+    if valid.empty:
+
+        st.info("No valid sales dates found.")
+        return
+
+    picked = period_selector(
+        "reports",
+        valid.min().date(),
+        valid.max().date(),
+        default="Last 1 month"
     )
 
-    if not isinstance(date_range, tuple) or len(date_range) != 2:
+    if picked is None:
 
         st.info("Select both a start date and an end date.")
         return
 
-    start, end = date_range
+    start, end = picked
 
     selected = data[
         (data["sale_date"].dt.date >= start) &
@@ -1543,6 +1605,19 @@ def reports_page():
     c3.metric("Units Sold", f"{units:,}")
 
     if not selected.empty:
+
+        by_product = (
+            selected.groupby("product_name", as_index=False)
+            .agg(
+                Units=("quantity", "sum"),
+                Sales=("total", "sum"),
+                Profit=("profit", "sum")
+            )
+            .sort_values("Sales", ascending=False)
+        )
+
+        st.markdown("### 🏷️ Product-wise Sales & Profit")
+        st.dataframe(by_product, use_container_width=True, hide_index=True)
 
         trend = (
             selected.groupby("sale_date", as_index=False)
@@ -1663,8 +1738,12 @@ answer, list_products, list_suppliers, stock_summary, low_stock, out_of_stock,
 sales_summary, today_sales, profit_summary, top_products, purchase_summary,
 add_product, add_stock, remove_stock, set_stock, set_price, add_supplier,
 update_supplier, delete_supplier, delete_product, add_purchase, record_sale,
-product_details, supplier_details, recent_sales, recent_purchases.
+product_details, supplier_details, recent_sales, recent_purchases, period_report.
+Extra keys for period_report: start_date, end_date (YYYY-MM-DD), metric (sales, profit or both).
 Rules:
+- For sales/profit over a time period (e.g. last 1 month, 2 mahine, this week, 15 din)
+  use action=period_report. Compute start_date and end_date from TODAY (given with the
+  request). "N mahine" means the last N months up to today.
 - Use answer for general questions or questions unrelated to the database.
 - For database questions, choose the best matching action.
 - Never invent names, quantities, prices, phone numbers, emails or addresses.
@@ -1680,7 +1759,8 @@ Rules:
         response = client.models.generate_content(
             model=_gemini_model_name(),
             contents=(
-                "DATABASE FACTS (JSON): " + json.dumps(snapshot, default=str) +
+                "TODAY (IST): " + today_ist().isoformat() +
+                "\nDATABASE FACTS (JSON): " + json.dumps(snapshot, default=str) +
                 "\nUSER REQUEST: " + user_text
             ),
             config=types.GenerateContentConfig(
@@ -1746,6 +1826,20 @@ def _ai_execute_plan(plan):
 
     if action == "answer":
         return _ai_answer_with_context(str(plan.get("question") or "Please clarify your request."))
+
+    if action == "period_report":
+        try:
+            start = _date.fromisoformat(str(plan.get("start_date"))[:10])
+            end = _date.fromisoformat(str(plan.get("end_date") or today)[:10])
+        except Exception:
+            return "Kaunsi period ki report chahiye? Jaise: 'pichle 1 mahine ki sales aur profit dikhao'."
+        if start > end:
+            start, end = end, start
+        return _period_report(
+            start, end,
+            f"{start:%d %b %Y} – {end:%d %b %Y}",
+            str(plan.get("metric") or "both").lower()
+        )
 
     if action in ("list_products", "stock_summary"):
         df = query_df("SELECT name, sku, stock, selling_price, supplier FROM products ORDER BY name")
@@ -1844,7 +1938,7 @@ def _ai_execute_plan(plan):
             total = cost * qty
             execute("UPDATE products SET stock=stock+?, purchase_price=?, updated_at=? WHERE id=?", (qty, cost, now, int(row["id"])))
             execute("INSERT INTO purchases(purchase_no,product_id,product_name,supplier,quantity,unit_cost,total,purchase_date,status) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (f"AI-{datetime.now().strftime('%Y%m%d%H%M%S')}", int(row["id"]), row["name"], supplier_name or row["supplier"], qty, cost, total, now, "Completed"))
+                    (f"AI-{datetime.now().strftime('%Y%m%d%H%M%S')}", int(row["id"]), row["name"], supplier_name or row["supplier"], qty, cost, total, today, "Completed"))
             return f"✅ Purchase saved: {qty} × {row['name']}; stock is now {int(row['stock'])+qty}. Purchase total {money(total)}."
         if action == "record_sale":
             if qty > int(row["stock"]):
@@ -1854,7 +1948,7 @@ def _ai_execute_plan(plan):
             profit = (price - float(row["purchase_price"] or 0)) * qty
             execute("UPDATE products SET stock=stock-?, updated_at=? WHERE id=?", (qty, now, int(row["id"])))
             execute("INSERT INTO sales(invoice_no,product_id,product_name,customer,quantity,unit_price,unit_cost,total,profit,sale_date) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                    (f"AI-{datetime.now().strftime('%Y%m%d%H%M%S')}", int(row["id"]), row["name"], plan.get("customer") or "Walk-in", qty, price, float(row["purchase_price"] or 0), total, profit, now))
+                    (f"AI-{datetime.now().strftime('%Y%m%d%H%M%S')}", int(row["id"]), row["name"], plan.get("customer") or "Walk-in", qty, price, float(row["purchase_price"] or 0), total, profit, today))
             return f"✅ Sale recorded: {qty} × {row['name']} for {money(total)}. Remaining stock: {int(row['stock'])-qty}."
         return "I couldn't complete that product action."
 
@@ -1870,8 +1964,10 @@ def _ai_execute_plan(plan):
                      float(plan.get("purchase_price") or 0), float(plan.get("selling_price") or 0),
                      int(plan.get("quantity") or 0), int(plan.get("reorder_level") or 5),
                      supplier_name or None, now, now))
+            if supplier_name:
+                execute("INSERT OR IGNORE INTO suppliers(name) VALUES(?)", (supplier_name,))
             return f"✅ Product '{name}' added to inventory."
-        except sqlite3.IntegrityError:
+        except DB_INTEGRITY_ERRORS:
             return "A product with that SKU/name already exists. Check the inventory first."
 
     if action in ("add_supplier", "update_supplier", "delete_supplier", "supplier_details"):
@@ -1886,7 +1982,7 @@ def _ai_execute_plan(plan):
                 execute("INSERT INTO suppliers(name,phone,email,address) VALUES(?,?,?,?)",
                         (supplier_name, plan.get("phone"), plan.get("email"), plan.get("address")))
                 return f"✅ Supplier '{supplier_name}' added successfully."
-            except sqlite3.IntegrityError:
+            except DB_INTEGRITY_ERRORS:
                 return "This supplier already exists. Ask me to update its details instead."
         if row is None:
             return "Supplier not found or name is ambiguous."
@@ -1907,10 +2003,136 @@ def _ai_execute_plan(plan):
     return "I understood the request, but need one more detail. Please rephrase it or tell me the exact product/supplier name."
 
 
+_NUM_WORDS = {
+    "ek": 1, "one": 1, "do": 2, "two": 2, "teen": 3, "three": 3,
+    "char": 4, "chaar": 4, "four": 4, "paanch": 5, "panch": 5, "five": 5,
+    "chhe": 6, "che": 6, "six": 6, "saat": 7, "seven": 7,
+    "aath": 8, "eight": 8, "nau": 9, "nine": 9, "das": 10, "ten": 10,
+}
+_NUM = r"(\d+|ek|one|do|two|teen|three|char|chaar|four|paanch|panch|five|chhe|che|six|saat|seven|aath|eight|nau|nine|das|ten)"
+_MONTH_UNIT = r"(mahine|mahina|mahinon|mahinay|month|months|महीने|महीना|महिने)"
+_WEEK_UNIT = r"(hafte|hafta|haftey|week|weeks|हफ्ते|हफ्ता|सप्ताह)"
+_DAY_UNIT = r"(din|dino|days|day|दिन)"
+_YEAR_UNIT = r"(saal|saalon|year|years|साल|वर्ष)"
+_SALES_RE = r"(?<![a-z])(sale|sales|bikri|bikree|revenue|becha|bika)(?![a-z])|बिक्री"
+_PROFIT_RE = r"(?<![a-z])(profit|munafa|munaafa|labh|fayda|nafa|naafa)(?![a-z])|मुनाफा|मुनाफ़ा|लाभ"
+_WRITE_RE = r"(?<![a-z])(sell|bech|add|delete|remove|hata|update|set|record|create|naya|new)(?![a-z])"
+
+
+def _to_int(token):
+    token = token.strip().lower()
+    return int(token) if token.isdigit() else _NUM_WORDS.get(token, 1)
+
+
+def _parse_period(text, today):
+    """Return (start, end, label) for phrases like '1 mahine', 'last 15 din', 'pichle mahine'."""
+    t = " " + str(text).lower() + " "
+
+    m = re.search(_NUM + r"\s*" + _MONTH_UNIT, t)
+    if m:
+        n = _to_int(m.group(1))
+        return months_back(today, n) + timedelta(days=1), today, f"Last {n} month{'s' if n > 1 else ''}"
+
+    m = re.search(_NUM + r"\s*" + _WEEK_UNIT, t)
+    if m:
+        n = _to_int(m.group(1))
+        return today - timedelta(days=7 * n - 1), today, f"Last {n} week{'s' if n > 1 else ''}"
+
+    m = re.search(_NUM + r"\s*" + _DAY_UNIT, t)
+    if m:
+        n = _to_int(m.group(1))
+        return today - timedelta(days=n - 1), today, f"Last {n} day{'s' if n > 1 else ''}"
+
+    m = re.search(_NUM + r"\s*" + _YEAR_UNIT, t)
+    if m:
+        n = _to_int(m.group(1))
+        return months_back(today, 12 * n) + timedelta(days=1), today, f"Last {n} year{'s' if n > 1 else ''}"
+
+    if re.search(r"(pichl[ae]|pichhl[ae]|last|previous|पिछले)\s+" + _MONTH_UNIT, t):
+        first_this = today.replace(day=1)
+        end = first_this - timedelta(days=1)
+        return end.replace(day=1), end, "Previous month"
+
+    if re.search(r"(?<![a-z])(is|iss|this|current|इस)\s+" + _MONTH_UNIT, t):
+        return today.replace(day=1), today, "This month"
+
+    if re.search(r"(?<![a-z])(is|iss|this|इस)\s+" + _WEEK_UNIT, t):
+        return today - timedelta(days=today.weekday()), today, "This week"
+
+    if re.search(r"(?<![a-z])(is|iss|this|इस)\s+" + _YEAR_UNIT, t):
+        return today.replace(month=1, day=1), today, "This year"
+
+    if re.search(r"(?<![a-z])(aaj|today)(?![a-z])|आज", t):
+        return today, today, "Today"
+
+    if re.search(r"(?<![a-z])(kal|yesterday)(?![a-z])|कल", t):
+        y = today - timedelta(days=1)
+        return y, y, "Yesterday"
+
+    if re.search(_MONTH_UNIT, t):
+        return months_back(today, 1) + timedelta(days=1), today, "Last 1 month"
+
+    return None
+
+
+def _period_report(start, end, label, focus="both"):
+    s_iso, e_iso = start.isoformat(), end.isoformat()
+    where = "WHERE substr(sale_date,1,10) BETWEEN ? AND ?"
+    tot = query_df(
+        "SELECT COUNT(*) bills, COALESCE(SUM(total),0) revenue, "
+        "COALESCE(SUM(profit),0) profit, COALESCE(SUM(quantity),0) units "
+        "FROM sales " + where, (s_iso, e_iso)
+    ).iloc[0]
+    heading = f"📊 **{label}** ({start:%d %b %Y} – {end:%d %b %Y})"
+    if int(tot.bills) == 0:
+        return heading + "\n\nIs period me koi sale record nahi hui."
+
+    revenue, profit = float(tot.revenue), float(tot.profit)
+    margin = (profit / revenue * 100) if revenue else 0
+    lines = [heading, ""]
+    if focus != "profit":
+        lines.append(f"- 💰 **Sales:** {money(revenue)}")
+    if focus != "sales":
+        lines.append(f"- 📈 **Profit:** {money(profit)} (margin {margin:.1f}%)")
+    lines.append(f"- 📦 Units sold: {int(tot.units)} | 🧾 Sale entries: {int(tot.bills)}")
+
+    order = "profit" if focus == "profit" else "revenue"
+    top = query_df(
+        "SELECT product_name, SUM(quantity) units, SUM(total) revenue, SUM(profit) profit "
+        "FROM sales " + where + f" GROUP BY product_name ORDER BY {order} DESC LIMIT 5",
+        (s_iso, e_iso)
+    )
+    if not top.empty:
+        lines += ["", "**🏆 Top products**"]
+        for _, r in top.iterrows():
+            lines.append(
+                f"- {r.product_name} — {int(r.units)} units | Sales {money(r.revenue)} | Profit {money(r.profit)}"
+            )
+    return "\n".join(lines)
+
+
+def _quick_period_answer(text):
+    """Answers 'N mahine ki sales/profit' style questions directly from the database."""
+    t = str(text).lower()
+    has_sales = bool(re.search(_SALES_RE, t))
+    has_profit = bool(re.search(_PROFIT_RE, t))
+    if not (has_sales or has_profit) or re.search(_WRITE_RE, t):
+        return None
+    period = _parse_period(t, today_ist())
+    if period is None:
+        return None
+    start, end, label = period
+    focus = "profit" if (has_profit and not has_sales) else "sales" if (has_sales and not has_profit) else "both"
+    return _period_report(start, end, label, focus)
+
+
 def process_ai(command):
     original = str(command or "").strip()
     if not original:
         return "Please ask me something."
+    quick = _quick_period_answer(original)
+    if quick:
+        return quick
     plan, error = _ai_make_plan(original)
     if error:
         return error
@@ -1931,6 +2153,10 @@ def ai_page():
     with st.expander("What can I ask the AI Assistant?"):
         st.markdown("""
         - "Aaj kitni sale hui aur kitna profit hua?"
+        - "1 mahine ki sales aur profit dikhao."
+        - "2 mahine ki sales dikhao."
+        - "Pichle mahine ka profit batao."
+        - "Last 15 din ki sales dikhao."
         - "Mere low-stock products batao."
         - "Add 30 units of Maggi."
         - "Naya product add karo: Amul Butter, category Dairy, price 60, stock 20."
@@ -2068,10 +2294,80 @@ def settings_page():
 - Cloud deployment
 """)
 
+    st.divider()
+
+    if USE_PG:
+        st.markdown("### ☁️ Cloud Database")
+        st.success(
+            "Connected to your cloud PostgreSQL database. Everything you add "
+            "is saved permanently, even if the app restarts or is redeployed."
+        )
+        st.download_button(
+            "📥 Download all data (ZIP of CSV files)",
+            data=export_zip(),
+            file_name=f"smartstock_data_{today_ist().isoformat()}.zip",
+            mime="application/zip"
+        )
+        return
+
+    st.markdown("### 💾 Backup & Restore")
+    st.caption(
+        "All your products, sales and purchases are saved in a SQLite file. "
+        "Download a backup regularly so your data is never lost."
+    )
+    st.caption(f"Database file: {DB_FILE}")
+
+    if DB_FILE.exists():
+        st.download_button(
+            "📥 Download full backup (.db)",
+            data=DB_FILE.read_bytes(),
+            file_name=f"smartstock_backup_{today_ist().isoformat()}.db",
+            mime="application/octet-stream"
+        )
+
+    uploaded = st.file_uploader(
+        "Restore from a backup file",
+        type=["db", "sqlite", "sqlite3"],
+        key="restore_upload"
+    )
+    if uploaded is not None:
+        st.warning("Restoring will replace ALL current data with the backup.")
+        if st.button("♻️ Restore this backup", key="restore_btn"):
+            blob = uploaded.getvalue()
+            safety_copy = DB_FILE.with_name("smartstock_before_restore.db")
+            if not blob.startswith(b"SQLite format 3"):
+                st.error("This is not a valid SmartStock backup file.")
+            else:
+                try:
+                    shutil.copy2(DB_FILE, safety_copy)
+                    DB_FILE.write_bytes(blob)
+                    conn = db()
+                    try:
+                        conn.execute("SELECT COUNT(*) FROM products")
+                        conn.execute("CREATE TABLE IF NOT EXISTS app_meta(key TEXT PRIMARY KEY, value TEXT)")
+                        conn.execute(
+                            "INSERT OR REPLACE INTO app_meta(key, value) VALUES('demo_data_cleared', ?)",
+                            (datetime.now().isoformat(),)
+                        )
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    initialize_database()
+                    flash("Backup restored successfully.")
+                    st.rerun()
+                except sqlite3.Error as exc:
+                    try:
+                        shutil.copy2(safety_copy, DB_FILE)
+                    except Exception:
+                        pass
+                    st.error(f"Restore failed, previous data kept: {exc}")
+
 
 # =========================================================
 # FINAL PAGE ROUTER
 # =========================================================
+
+show_flash()
 
 if page == " Dashboard":
 
