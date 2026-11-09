@@ -173,8 +173,19 @@ def _pg_pool():
 
 def db():
     if USE_PG:
-        pool = _pg_pool()
-        raw = pool.getconn()
+        try:
+            pool = _pg_pool()
+            raw = pool.getconn()
+        except Exception as exc:
+            reason = str(exc).replace(DATABASE_URL, "<DATABASE_URL>").strip()
+            st.error(
+                "☁️ Could not connect to the cloud database.\n\n"
+                f"**Reason:** {reason}\n\n"
+                "Check: (1) the Session pooler string is used (host contains 'pooler'), "
+                "(2) password is correct, written without [ ] and without spaces, "
+                "(3) the Supabase project is active (not paused)."
+            )
+            st.stop()
         try:
             test = raw.cursor()
             test.execute("SELECT 1")
